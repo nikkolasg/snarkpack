@@ -1,13 +1,10 @@
 use ark_ec::msm::FixedBaseMSM;
-use ark_ec::{group::Group, AffineCurve, PairingEngine, ProjectiveCurve};
+use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
 use ark_std::{rand::Rng, One, UniformRand};
 use sha2::{Digest, Sha256};
-use std::convert::TryFrom;
-use std::io::{self, Error as IOError, ErrorKind, Read, Write};
-use std::mem::size_of;
-use thiserror::Error;
+use std::io::{Error as IOError, ErrorKind, Read, Write};
 
 use rayon::prelude::*;
 use std::clone::Clone;

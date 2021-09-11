@@ -17,4 +17,16 @@ pub enum Error {
 
     #[error("Invalid pairing result")]
     InvalidPairing,
+
+    #[error("Not Enough Proofs")]
+    NotEnoughProofs,
+
+    #[error("Not a power of two")]
+    NotPowerOfTwo,
+
+    #[error("Invalid SRS")]
+    InvalidSRS,
+
+    #[error("Invalid proof: {0}")]
+    InvalidProof(String),
 }

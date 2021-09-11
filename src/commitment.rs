@@ -1,11 +1,11 @@
 use crate::ip;
 use crate::Error;
-use ark_ec::{group::Group, AffineCurve, PairingEngine, ProjectiveCurve};
-use ark_ff::Field;
+use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
 use ark_std::{
-    fmt::{Debug, Display},
-    hash::Hash,
-    ops::{Add, AddAssign, MulAssign, Neg, Sub, SubAssign},
+    fmt::Debug,
+    io::{Read, Write},
+    ops::MulAssign,
     vec::Vec,
 };
 use rayon::prelude::*;
@@ -44,6 +44,26 @@ pub struct Key<G: AffineCurve> {
     pub a: Vec<G>,
     /// Exponent is b
     pub b: Vec<G>,
+}
+
+impl<G: AffineCurve> CanonicalSerialize for Key<G> {
+    fn serialize(&self, mut out: impl Write) -> Result<(), SerializationError> {
+        self.a.serialize(&mut out)?;
+        self.b.serialize(&mut out)?;
+        Ok(())
+    }
+
+    fn serialized_size(&self) -> usize {
+        self.a.serialized_size() + self.b.serialized_size()
+    }
+}
+
+impl<G: AffineCurve> CanonicalDeserialize for Key<G> {
+    fn deserialize(mut out: impl Write) -> Result<Self, SerializationError> {
+        let a = G::deserialize(&mut out)?;
+        let b = G::deserialize(&mut out)?;
+        Ok(Key { a, b })
+    }
 }
 /// Commitment key used by the "single" commitment on G1 values as
 /// well as in the "pair" commtitment.
@@ -139,7 +159,7 @@ where
 }
 
 /// Both commitment outputs a pair of $F_q^k$ element.
-pub type Output<E> = (<E as PairingEngine>::Fqk, <E as PairingEngine>::Fqk);
+pub struct Output<E: PairingEngine> = (E::Fqk, E::Fqk);
 
 /// Commits to a single vector of G1 elements in the following way:
 /// $T = \prod_{i=0}^n e(A_i, v_{1,i})$
@@ -180,6 +200,24 @@ pub fn pair<E: PairingEngine>(
     t1.mul_assign(&t2);
     u1.mul_assign(&u2);
     Ok((t1, u1))
+}
+
+impl<E: PairingEngine> CanonicalSerialize for Output<E> {
+    fn serialize<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
+        self.0.serialize(&mut writer)?;
+        self.1.serialize(&mut writer)?;
+    }
+    fn serialized_size(&self) -> usize {
+        self.0.serialized_size() + self.1.serialized_size()
+    }
+}
+
+impl<E: PairingEngine> CanonicalDeserialize for Output<E> {
+    fn deserialize<R: Read>(reader: R) -> Result<Self, SerializationError> {
+        let a = E::Fqk::deserialize(&mut reader)?;
+        let b = E::Fqk::deserialize(&mut reader)?;
+        Ok((a, b))
+    }
 }
 
 #[cfg(test)]
