@@ -1,7 +1,7 @@
-use std::io::{Read, Write};
-use ark_ec::{AffineCurve, PairingEngine};
+use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
+use std::io::{Read, Write};
 
 use super::Error;
 use super::{
@@ -12,12 +12,13 @@ use super::{
 /// AggregateProof contains all elements to verify n aggregated Groth16 proofs
 /// using inner pairing product arguments. This proof can be created by any
 /// party in possession of valid Groth16 proofs.
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct AggregateProof<E: PairingEngine> {
     /// commitment to A and B using the pair commitment scheme needed to verify
     /// TIPP relation.
-    pub com_ab: commitment::Output<E>,
+    pub com_ab: commitment::Output<E::Fqk>,
     /// commit to C separate since we use it only in MIPP
-    pub com_c: commitment::Output<E>,
+    pub com_c: commitment::Output<E::Fqk>,
     /// $A^r * B = Z$ is the left value on the aggregated Groth16 equation
     pub ip_ab: E::Fqk,
     /// $C^r$ is used on the right side of the aggregated Groth16 equation
@@ -42,7 +43,9 @@ impl<E: PairingEngine> AggregateProof<E> {
         let gipa = &self.tmipp.gipa;
         // 1. Check length of the proofs
         if gipa.nproofs < 2 || gipa.nproofs as usize > srs::MAX_SRS_SIZE {
-            return Err(Error::InvalidProof("Proof length out of bounds"));
+            return Err(Error::InvalidProof(
+                "Proof length out of bounds".to_string(),
+            ));
         }
         // 2. Check if it's a power of two
         if !gipa.nproofs.is_power_of_two() {
@@ -68,67 +71,27 @@ impl<E: PairingEngine> AggregateProof<E> {
     /// high level protocol to use it as a library. If you want to use within
     /// another arkwork protocol, you can use the underlying implementation of
     /// `CanonicalSerialize`.
-    pub fn write(&self, mut out: impl Write) -> Result<(), Error> {
+    pub fn write<W: Write>(&self, mut out: W) -> Result<(), Error> {
         self.serialize(&mut out)
-            .map_err(|e| Error::SerializationError(e))
+            .map_err(|e| Error::Serialization(e))
     }
 
     /// Reads the aggregate proof to the given destination. This method is for
     /// high level protocol to use it as a library. If you want to use within
     /// another arkwork protocol, you can use the underlying implementation of
     /// `CanonicalSerialize`.
-    pub fn read(mut source: impl Read) -> Result<Self, SerializationError> {
-        Self::deserialize(&mut source).map_err(|e| Error::SerializationError(e))
-    }
-}
-
-impl<E> CanonicalSerialize for AggregateProof<E>
-where
-    E: PairingEngine,
-{
-    fn serialize(&self, mut out: impl Write) -> Result<(), SerializationError> {
-        self.com_ab.serialize(&mut out)?;
-        self.com_c.serialize(&mut out)?;
-        self.ip_ab.serialize(&mut out)?;
-        self.agg_c.serialize(&mut out)?;
-        self.tmipp.serialize(&mut out)
-    }
-
-    // TODO: refactor and calculate precisely
-    fn serialized_size(&self) -> usize {
-        let mut out = Vec::new();
-        self.write(&mut out).unwrap();
-        out.len()
-    }
-}
-
-impl<E> CanonicalDeserialize for AggregateProof<E>
-where
-    E: PairingEngine,
-{
-    fn deserialize(mut source: impl Read) -> Result<Self, SerializationError> {
-        let com_ab = Output::<E>::deserialize(&mut source)?;
-        let com_c = Output::<E>::deserialize(&mut source)?;
-        let ip_ab = <E::Fqk>::deserialize(&mut source)?;
-        let agg_c = <E::G1Affine>::deserialize(&mut source)?;
-        let tmipp = TippMippProof::deserialize(&mut source)?;
-
-        Ok(AggregateProof {
-            com_ab,
-            com_c,
-            ip_ab,
-            agg_c,
-            tmipp,
-        })
+    pub fn read<R: Read>(mut source: R) -> Result<Self, Error> {
+        Self::deserialize(&mut source).map_err(|e| Error::Serialization(e))
     }
 }
 
 /// It contains all elements derived in the GIPA loop for both TIPP and MIPP at
-/// the same time.
+/// the same time. Serialization is done manually here for better inspection
+/// (CanonicalSerialization is implemented manually, not via the macro).
 pub struct GipaProof<E: PairingEngine> {
     pub nproofs: u32,
-    pub comms_ab: Vec<(commitment::Output<E>, commitment::Output<E>)>,
-    pub comms_c: Vec<(commitment::Output<E>, commitment::Output<E>)>,
+    pub comms_ab: Vec<(commitment::Output<E::Fqk>, commitment::Output<E::Fqk>)>,
+    pub comms_c: Vec<(commitment::Output<E::Fqk>, commitment::Output<E::Fqk>)>,
     pub z_ab: Vec<(E::Fqk, E::Fqk)>,
     pub z_c: Vec<(E::G1Affine, E::G1Affine)>,
     pub final_a: E::G1Affine,
@@ -162,7 +125,25 @@ impl<E: PairingEngine> GipaProof<E> {
 }
 
 impl<E: PairingEngine> CanonicalSerialize for GipaProof<E> {
-    fn serialize(&self, mut out: impl Write) -> Result<(), SerializationError> {
+    fn serialized_size(&self) -> usize {
+        let log_proofs = Self::log_proofs(self.nproofs as usize);
+        (self.nproofs as u32).serialized_size()
+            + log_proofs
+                * (self.comms_ab[0].0.serialized_size()
+                    + self.comms_ab[0].1.serialized_size()
+                    + self.comms_c[0].0.serialized_size()
+                    + self.comms_c[0].1.serialized_size()
+                    + self.z_ab[0].0.serialized_size()
+                    + self.z_ab[0].1.serialized_size()
+                    + self.z_c[0].0.serialized_size()
+                    + self.z_c[0].1.serialized_size()
+                    + self.final_a.serialized_size()
+                    + self.final_b.serialized_size()
+                    + self.final_c.serialized_size()
+                    + self.final_vkey.serialized_size()
+                    + self.final_wkey.serialized_size())
+    }
+    fn serialize<W: Write>(&self, mut out: W) -> Result<(), SerializationError> {
         // number of proofs
         self.nproofs.serialize(&mut out)?;
 
@@ -209,11 +190,11 @@ impl<E: PairingEngine> CanonicalSerialize for GipaProof<E> {
     }
 }
 
-impl<E> CanonicalDeserialize for AggregateProof<E>
+impl<E> CanonicalDeserialize for GipaProof<E>
 where
     E: PairingEngine,
 {
-    fn deserialize(mut source: impl Read) -> Result<Self, SerializationError> {
+    fn deserialize<R: Read>(mut source: R) -> Result<Self, SerializationError> {
         let nproofs = u32::deserialize(&mut source)?;
         if nproofs < 2 {
             return Err(SerializationError::InvalidData);
@@ -224,16 +205,16 @@ where
         let mut comms_ab = Vec::with_capacity(log_proofs);
         for _ in 0..log_proofs {
             comms_ab.push((
-                Output::<E>::deserialize(&mut source)?,
-                Output::<E>::deserialize(&mut source)?,
+                Output::<E::Fqk>::deserialize(&mut source)?,
+                Output::<E::Fqk>::deserialize(&mut source)?,
             ));
         }
 
         let mut comms_c = Vec::with_capacity(log_proofs);
         for _ in 0..log_proofs {
             comms_c.push((
-                Output::<E>::deserialize(&mut source)?,
-                Output::<E>::deserialize(&mut source)?,
+                Output::<E::Fqk>::deserialize(&mut source)?,
+                Output::<E::Fqk>::deserialize(&mut source)?,
             ));
         }
 
@@ -254,11 +235,17 @@ where
         }
 
         let final_a = E::G1Affine::deserialize(&mut source)?;
-        let final_b = E::G1Affine::deserialize(&mut source)?;
+        let final_b = E::G2Affine::deserialize(&mut source)?;
         let final_c = E::G1Affine::deserialize(&mut source)?;
 
-        let final_vkey = commitment::VKey::<E>::deserialize(&mut source)?;
-        let final_wkey = commitment::WKey::<E>::deserialize(&mut source)?;
+        let final_vkey = (
+            E::G2Affine::deserialize(&mut source)?,
+            E::G2Affine::deserialize(&mut source)?,
+        );
+        let final_wkey = (
+            E::G1Affine::deserialize(&mut source)?,
+            E::G1Affine::deserialize(&mut source)?,
+        );
 
         Ok(GipaProof {
             nproofs,
@@ -277,6 +264,7 @@ where
 
 /// It contains the GIPA recursive elements as well as the KZG openings for v
 /// and w
+#[derive(CanonicalSerialize, CanonicalDeserialize)]
 pub struct TippMippProof<E: PairingEngine> {
     pub gipa: GipaProof<E>,
     pub vkey_opening: KZGOpening<E::G2Affine>,
@@ -291,59 +279,14 @@ impl<E: PairingEngine> PartialEq for TippMippProof<E> {
     }
 }
 
-impl<E: PairingEngine> CanonicalSerialize for TippMippProof<E> {
-    fn serialize(&self, mut out: impl Write) -> Result<(), SerializationError> {
-        self.gipa.serialize(&mut out)?;
-
-        // KZG openings
-        self.vkey_opening.serialize(&mut out)?;
-        self.wkey_opening.serialize(&mut out)?;
-
-        Ok(())
-    }
-
-    fn serialized_size(&self) -> usize {
-        self.gipa.serialized_size()
-            + self.vkey_opening.serialized_size()
-            + self.wkey_opening.serialized_size()
-    }
-}
-impl<E> CanonicalDeserialize for AggregateProof<E>
-where
-    E: PairingEngine,
-{
-    fn deserialize(mut source: impl Read) -> Result<Self, SerializationError> {
-        let gipa = GipaProof::deserialize(&mut source)?;
-        let vkey_opening = KZGOpening::<E::G2Affine>::deserialize(&mut source)?;
-        let wkey_opening = KZGOpening::<E::G1Affine>::deserialize(&mut source)?;
-        Ok(TippMippProof {
-            gipa,
-            vkey_opening,
-            wkey_opening,
-        })
-    }
-}
-
 /// KZGOpening represents the KZG opening of a commitment key (which is a tuple
 /// given commitment keys are a tuple).
-pub struct KZGOpening<G> = (G, G);
+#[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct KZGOpening<G: AffineCurve>(G, G);
 
-impl<G: AffineCurve> CanonicalSerialize for KZGOpening<G> {
-    fn serialize(&self, mut out: impl Write) -> Result<(), SerializationError> {
-        self.0.serialize(&mut out)?;
-        self.1.serialize(&mut out)?;
-        Ok(())
-    }
-    fn serialized_size(&self) -> usize {
-        self.0.serialized_size() + self.1.seralize_size()
-    }
-}
-
-impl<G: AffineCurve> CanonicalDeserialize for KZGOpening<G> {
-    fn deserialize(r: impl Read) -> Result<Self, SerializationError> {
-        let a = G::deserialize(&mut r)?;
-        let b = G::deserialize(&mut r)?;
-        Ok((a, b))
+impl<G: AffineCurve> KZGOpening<G> {
+    pub fn new_from_proj(a: G::Projective, b: G::Projective) -> Self {
+        KZGOpening(a.into_affine(), b.into_affine())
     }
 }
 

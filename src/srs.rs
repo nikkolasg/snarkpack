@@ -9,7 +9,7 @@ use std::io::{Error as IOError, ErrorKind, Read, Write};
 use rayon::prelude::*;
 use std::clone::Clone;
 
-use crate::commitment::{VKey, WKey};
+use super::commitment::{VKey, WKey};
 use crate::Error;
 
 use std::ops::MulAssign;

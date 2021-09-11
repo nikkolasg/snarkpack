@@ -1,6 +1,7 @@
 use crate::ip;
 use crate::Error;
 use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
+use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
 use ark_std::{
     fmt::Debug,
@@ -38,7 +39,7 @@ use rayon::prelude::*;
 /// one commitment.
 /// Key is a generic commitment key that is instanciated with g and h as basis,
 /// and a and b as powers.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, CanonicalSerialize, CanonicalDeserialize)]
 pub struct Key<G: AffineCurve> {
     /// Exponent is a
     pub a: Vec<G>,
@@ -46,25 +47,30 @@ pub struct Key<G: AffineCurve> {
     pub b: Vec<G>,
 }
 
-impl<G: AffineCurve> CanonicalSerialize for Key<G> {
-    fn serialize(&self, mut out: impl Write) -> Result<(), SerializationError> {
-        self.a.serialize(&mut out)?;
-        self.b.serialize(&mut out)?;
-        Ok(())
-    }
+// TODO implement that in cooridnation with ProverSRS
+/*impl<G: AffineCurve> CanonicalSerialize for Key<G> {*/
+//fn serialize(&self, mut out: impl Write) -> Result<(), SerializationError> {
+//for a in self.a {
+//a.serialize(&mut out)?;
+//}
+//for b in self.b {
+//b.serialize(&mut out)?;
+//}
+//Ok(())
+//}
 
-    fn serialized_size(&self) -> usize {
-        self.a.serialized_size() + self.b.serialized_size()
-    }
-}
+//fn serialized_size(&self) -> usize {
+//self.a.serialized_size() + self.b.serialized_size()
+//}
+//}
 
-impl<G: AffineCurve> CanonicalDeserialize for Key<G> {
-    fn deserialize(mut out: impl Write) -> Result<Self, SerializationError> {
-        let a = G::deserialize(&mut out)?;
-        let b = G::deserialize(&mut out)?;
-        Ok(Key { a, b })
-    }
-}
+//impl<G: AffineCurve> CanonicalDeserialize for Key<G> {
+//fn deserialize(mut out: impl Write) -> Result<Self, SerializationError> {
+//let a = G::deserialize(&mut out)?;
+//let b = G::deserialize(&mut out)?;
+//Ok(Key { a, b })
+//}
+/*}*/
 /// Commitment key used by the "single" commitment on G1 values as
 /// well as in the "pair" commtitment.
 /// It contains $\{h^a^i\}_{i=1}^n$ and $\{h^b^i\}_{i=1}^n$
@@ -159,7 +165,8 @@ where
 }
 
 /// Both commitment outputs a pair of $F_q^k$ element.
-pub struct Output<E: PairingEngine> = (E::Fqk, E::Fqk);
+#[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+pub struct Output<F: Field + CanonicalSerialize + CanonicalDeserialize>(F, F);
 
 /// Commits to a single vector of G1 elements in the following way:
 /// $T = \prod_{i=0}^n e(A_i, v_{1,i})$
@@ -168,12 +175,13 @@ pub struct Output<E: PairingEngine> = (E::Fqk, E::Fqk);
 pub fn single_g1<E: PairingEngine>(
     vkey: &VKey<E>,
     a_vec: &[E::G1Affine],
-) -> Result<Output<E>, Error> {
+) -> Result<Output<E::Fqk>, Error> {
     try_par! {
         let a = ip::pairing::<E>(a_vec, &vkey.a),
         let b = ip::pairing::<E>(a_vec, &vkey.b)
     };
-    Ok((a, b))
+    //Ok(Output { a, b })
+    Ok(Output(a, b))
 }
 
 /// Commits to a tuple of G1 vector and G2 vector in the following way:
@@ -185,7 +193,7 @@ pub fn pair<E: PairingEngine>(
     wkey: &WKey<E>,
     a: &[E::G1Affine],
     b: &[E::G2Affine],
-) -> Result<Output<E>, Error> {
+) -> Result<Output<E::Fqk>, Error> {
     try_par! {
         // (A * v)
         let t1 = ip::pairing::<E>(a, &vkey.a),
@@ -199,25 +207,7 @@ pub fn pair<E: PairingEngine>(
     // (A * v)(w * B)
     t1.mul_assign(&t2);
     u1.mul_assign(&u2);
-    Ok((t1, u1))
-}
-
-impl<E: PairingEngine> CanonicalSerialize for Output<E> {
-    fn serialize<W: Write>(&self, writer: W) -> Result<(), SerializationError> {
-        self.0.serialize(&mut writer)?;
-        self.1.serialize(&mut writer)?;
-    }
-    fn serialized_size(&self) -> usize {
-        self.0.serialized_size() + self.1.serialized_size()
-    }
-}
-
-impl<E: PairingEngine> CanonicalDeserialize for Output<E> {
-    fn deserialize<R: Read>(reader: R) -> Result<Self, SerializationError> {
-        let a = E::Fqk::deserialize(&mut reader)?;
-        let b = E::Fqk::deserialize(&mut reader)?;
-        Ok((a, b))
-    }
+    Ok(Output(t1, u1))
 }
 
 #[cfg(test)]

@@ -1,5 +1,3 @@
-use std::ops::MulAssign;
-
 macro_rules! try_par {
     ($(let $name:ident = $f:expr),+) => {
         $(

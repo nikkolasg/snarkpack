@@ -1,19 +1,22 @@
-use ark_ec::{group::Group, AffineCurve, PairingEngine, ProjectiveCurve};
-use ark_ff::{to_bytes, Field, One};
+use ark_ec::{group::Group, msm::VariableBaseMSM, AffineCurve, PairingEngine, ProjectiveCurve};
+use ark_ff::{to_bytes, Field, One, PrimeField};
 use ark_groth16::{Proof, VerifyingKey};
-use ark_poly::polynomial::univariate::DensePolynomial;
+use ark_poly::polynomial::{univariate::DensePolynomial, UVPolynomial};
+use ark_std::{cfg_iter, Zero};
 
 use rayon::prelude::*;
-use std::ops::MulAssign;
+use std::ops::{AddAssign, MulAssign, Neg};
 
 use super::{
     commitment,
     commitment::{VKey, WKey},
     compress,
     errors::Error,
-    ip, structured_scalar_power,
+    ip,
+    proof::{AggregateProof, GipaProof, KZGOpening, TippMippProof},
+    srs::ProverSRS,
+    structured_scalar_power,
     transcript::Transcript,
-    AggregateProof, GipaProof, KZGOpening, ProverSRS, TippMippProof,
 };
 
 /// Aggregate `n` zkSnark proofs, where `n` must be a power of two.
@@ -27,9 +30,9 @@ use super::{
 /// number of proofs and public inputs (+100ms in our case). In the case of Filecoin, the only
 /// non-fixed part of the public inputs are the challenges derived from a seed. Even though this
 /// seed comes from a random beeacon, we are hashing this as a safety precaution.
-pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
+pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug>(
     srs: &ProverSRS<E>,
-    transcript_include: &mut T,
+    mut transcript: impl Transcript,
     proofs: &[Proof<E>],
 ) -> Result<AggregateProof<E>, Error> {
     if proofs.len() < 2 {
@@ -62,12 +65,12 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
     };
 
     // Derive a random scalar to perform a linear combination of proofs
-    transcript.append("AB commitment", &com_ab);
-    transcript.append("C commtiment", &com_c);
-    let r = transcript.challenge_scalar();
+    transcript.append(b"AB commitment", &com_ab);
+    transcript.append(b"C commtiment", &com_c);
+    let r = transcript.challenge_scalar::<E::Fr>(b"r-random-fiatshamir");
 
     // 1,r, r^2, r^3, r^4 ...
-    let r_vec: Vec<E::Fr> = structured_scalar_power(proofs.len(), &*r);
+    let r_vec: Vec<E::Fr> = structured_scalar_power(proofs.len(), &r);
     // 1,r^-1, r^-2, r^-3
     let r_inv = r_vec
         .par_iter()
@@ -78,7 +81,7 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
     let b_r = b
         .par_iter()
         .zip(r_vec.par_iter())
-        .map(|(bi, ri)| mul!(bi.into_projective(), ri.into_repr()).into_affine())
+        .map(|(bi, ri)| mul!(bi.into_projective(), ri.clone()).into_affine())
         .collect::<Vec<_>>();
 
     let refb_r = &b_r;
@@ -89,12 +92,12 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
         // compute C^r for the verifier
         let agg_c = ip::multiexponentiation::<E::G1Affine>(&refc, &refr_vec)
     };
-
+    let agg_c = agg_c.into_affine();
     // w^{r^{-1}}
     let wkey_r_inv = srs.wkey.scale(&r_inv)?;
 
     // we prove tipp and mipp using the same recursive loop
-    let proof = prove_tipp_mipp::<E>(
+    let proof = prove_tipp_mipp(
         &srs,
         &mut transcript,
         &a,
@@ -104,10 +107,9 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
         &r_vec,
         &ip_ab,
         &agg_c,
-        &hcom,
     )?;
     debug_assert!({
-        let computed_com_ab = commit::pair::<E>(&srs.vkey, &wkey_r_inv, &a, &b_r).unwrap();
+        let computed_com_ab = commitment::pair::<E>(&srs.vkey, &wkey_r_inv, &a, &b_r).unwrap();
         com_ab == computed_com_ab
     });
 
@@ -126,22 +128,21 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
 /// commitment key v is used to commit to A and C recursively in GIPA such that
 /// only one KZG proof is needed for v. In the original paper version, since the
 /// challenges of GIPA would be different, two KZG proofs would be needed.
-fn prove_tipp_mipp<E: PairingEngine, T: Transcript>(
+fn prove_tipp_mipp<E: PairingEngine>(
     srs: &ProverSRS<E>,
-    transcript: &mut T,
+    transcript: &mut impl Transcript,
     a: &[E::G1Affine],
     b: &[E::G2Affine],
     c: &[E::G1Affine],
     wkey: &WKey<E>, // scaled key w^r^-1
     r_vec: &[E::Fr],
     ip_ab: &E::Fqk,
-    agg_c: &E::G1,
-    hcom: &E::Fr,
-) -> Result<TippMippProof<E>, SynthesisError> {
+    agg_c: &E::G1Affine,
+) -> Result<TippMippProof<E>, Error> {
     let r_shift = r_vec[1].clone();
     // Run GIPA
     let (proof, mut challenges, mut challenges_inv) =
-        gipa_tipp_mipp::<E>(a, b, c, &srs.vkey, &wkey, r_vec, ip_ab, agg_c, hcom)?;
+        gipa_tipp_mipp(transcript, a, b, c, &srs.vkey, &wkey, r_vec, ip_ab, agg_c)?;
 
     // Prove final commitment keys are wellformed
     // we reverse the transcript so the polynomial in kzg opening is constructed
@@ -152,13 +153,12 @@ fn prove_tipp_mipp<E: PairingEngine, T: Transcript>(
     let r_inverse = r_shift.inverse().unwrap();
 
     // KZG challenge point
-    let z = Transcript::<E>::new("random-z")
-        .write(&challenges[0])
-        .write(&proof.final_vkey.0)
-        .write(&proof.final_vkey.1)
-        .write(&proof.final_wkey.0)
-        .write(&proof.final_wkey.1)
-        .into_challenge();
+    transcript.append(b"kzg-challenge", &challenges[0]);
+    transcript.append(b"vkey0", &proof.final_vkey.0);
+    transcript.append(b"vkey1", &proof.final_vkey.1);
+    transcript.append(b"wkey0", &proof.final_wkey.0);
+    transcript.append(b"wkey1", &proof.final_wkey.1);
+    let z = transcript.challenge_scalar::<E::Fr>(b"z-challenge");
 
     // Complete KZG proofs
     par! {
@@ -190,8 +190,8 @@ fn prove_tipp_mipp<E: PairingEngine, T: Transcript>(
 /// It returns a proof containing all intermdiate committed values, as well as
 /// the challenges generated necessary to do the polynomial commitment proof
 /// later in TIPP.
-fn gipa_tipp_mipp<E: PairingEngine, T: Transcript>(
-    transcript: &mut T,
+fn gipa_tipp_mipp<E: PairingEngine>(
+    transcript: &mut impl Transcript,
     a: &[E::G1Affine],
     b: &[E::G2Affine],
     c: &[E::G1Affine],
@@ -199,9 +199,8 @@ fn gipa_tipp_mipp<E: PairingEngine, T: Transcript>(
     wkey: &WKey<E>, // scaled key w^r^-1
     r: &[E::Fr],
     ip_ab: &E::Fqk,
-    agg_c: &E::G1,
-    hcom: &E::Fr,
-) -> Result<(GipaProof<E>, Vec<E::Fr>, Vec<E::Fr>), SynthesisError> {
+    agg_c: &E::G1Affine,
+) -> Result<(GipaProof<E>, Vec<E::Fr>, Vec<E::Fr>), Error> {
     // the values of vectors A and B rescaled at each step of the loop
     let (mut m_a, mut m_b) = (a.to_vec(), b.to_vec());
     // the values of vectors C and r rescaled at each step of the loop
@@ -217,10 +216,9 @@ fn gipa_tipp_mipp<E: PairingEngine, T: Transcript>(
     let mut challenges: Vec<E::Fr> = Vec::new();
     let mut challenges_inv: Vec<E::Fr> = Vec::new();
 
-    transcript.append(ip_ab);
-    transcript.append(agg_c);
-    transcript.append(&r[1]);
-    let mut c_inv: E::Fr = transcript.challenge_scalar();
+    transcript.append(b"inner-product-ab", ip_ab);
+    transcript.append(b"comm-c", agg_c);
+    let mut c_inv: E::Fr = transcript.challenge_scalar::<E::Fr>(b"first-challenge");
     let mut c = c_inv.inverse().unwrap();
 
     let mut i = 0;
@@ -265,9 +263,9 @@ fn gipa_tipp_mipp<E: PairingEngine, T: Transcript>(
             // Z_r = c[:n'] ^ r[n':]
             let zc_r = ip::multiexponentiation::<E::G1Affine>(rc_left, rr_right),
             // u_l = c[n':] * v[:n']
-            let tuc_l = commit::single_g1::<E>(&rvk_left, rc_right),
+            let tuc_l = commitment::single_g1::<E>(&rvk_left, rc_right),
             // u_r = c[:n'] * v[n':]
-            let tuc_r = commit::single_g1::<E>(&rvk_right, rc_left)
+            let tuc_r = commitment::single_g1::<E>(&rvk_right, rc_left)
         };
 
         // Fiat-Shamir challenge
@@ -275,16 +273,16 @@ fn gipa_tipp_mipp<E: PairingEngine, T: Transcript>(
         if i == 0 {
             // already generated c_inv and c outside of the loop
         } else {
-            transcript.append(&c_inv);
-            transcript.append(&zab_l);
-            transcript.append(&zab_r);
-            transcript.append(&zc_l);
-            transcript.append(&zc_r);
-            transcript.append(&tab_l);
-            transcript.append(&tab_r);
-            transcript.append(&tuc_l);
-            transcript.append(&tuc_r);
-            c_inv = transcript.challenge_scalar();
+            transcript.append(b"c_inv", &c_inv);
+            transcript.append(b"zab_l", &zab_l);
+            transcript.append(b"zab_r", &zab_r);
+            transcript.append(b"zc_l", &zc_l);
+            transcript.append(b"zc_r", &zc_r);
+            transcript.append(b"tab_l", &tab_l);
+            transcript.append(b"tab_r", &tab_r);
+            transcript.append(b"tuc_l", &tuc_l);
+            transcript.append(b"tuc_r", &tuc_r);
+            c_inv = transcript.challenge_scalar::<E::Fr>(b"challenge_i");
 
             // Optimization for multiexponentiation to rescale G2 elements with
             // 128-bit challenge Swap 'c' and 'c_inv' since can't control bit size
@@ -306,7 +304,7 @@ fn gipa_tipp_mipp<E: PairingEngine, T: Transcript>(
             .for_each(|(r_l, r_r)| {
                 // r[:n'] + r[n':]^x^-1
                 r_r.mul_assign(&c_inv);
-                r_l.add_assign(r_r);
+                r_l.add_assign(r_r.clone());
             });
         let len = r_left.len();
         m_r.resize(len, E::Fr::zero()); // shrink to new size
@@ -319,7 +317,7 @@ fn gipa_tipp_mipp<E: PairingEngine, T: Transcript>(
         comms_ab.push((tab_l, tab_r));
         comms_c.push((tuc_l, tuc_r));
         z_ab.push((zab_l, zab_r));
-        z_c.push((zc_l, zc_r));
+        z_c.push((zc_l.into_affine(), zc_r.into_affine()));
         challenges.push(c);
         challenges_inv.push(c_inv);
 
@@ -352,23 +350,22 @@ fn gipa_tipp_mipp<E: PairingEngine, T: Transcript>(
 }
 
 fn prove_commitment_v<G: AffineCurve>(
-    srs_powers_alpha_table: &dyn MultiscalarPrecomp<G>,
-    srs_powers_beta_table: &dyn MultiscalarPrecomp<G>,
+    srs_powers_alpha_table: &[G],
+    srs_powers_beta_table: &[G],
     n: usize,
-    transcript: &[G::Scalar],
-    kzg_challenge: &G::Scalar,
-) -> Result<KZGOpening<G>, SynthesisError> {
+    transcript: &[G::ScalarField],
+    kzg_challenge: &G::ScalarField,
+) -> Result<KZGOpening<G>, Error> {
     // f_v
-    let vkey_poly = DensePolynomial::from_coeffs(polynomial_coefficients_from_transcript(
-        transcript,
-        &G::Scalar::one(),
-    ));
+    let vkey_poly = DensePolynomial::from_coefficients_vec(
+        polynomial_coefficients_from_transcript(transcript, &G::ScalarField::one()),
+    );
 
     // f_v(z)
     let vkey_poly_z = polynomial_evaluation_product_form_from_transcript(
         &transcript,
         kzg_challenge,
-        &G::Scalar::one(),
+        &G::ScalarField::one(),
     );
 
     create_kzg_opening(
@@ -381,20 +378,20 @@ fn prove_commitment_v<G: AffineCurve>(
     )
 }
 
-fn prove_commitment_w<G: CurveAffine>(
-    srs_powers_alpha_table: &dyn MultiscalarPrecomp<G>,
-    srs_powers_beta_table: &dyn MultiscalarPrecomp<G>,
+fn prove_commitment_w<G: AffineCurve>(
+    srs_powers_alpha_table: &[G],
+    srs_powers_beta_table: &[G],
     n: usize,
-    transcript: &[G::Scalar],
-    r_shift: &G::Scalar,
-    kzg_challenge: &G::Scalar,
-) -> Result<KZGOpening<G>, SynthesisError> {
+    transcript: &[G::ScalarField],
+    r_shift: &G::ScalarField,
+    kzg_challenge: &G::ScalarField,
+) -> Result<KZGOpening<G>, Error> {
     // this computes f(X) = \prod (1 + x (rX)^{2^j})
     let mut fcoeffs = polynomial_coefficients_from_transcript(transcript, r_shift);
     // this computes f_w(X) = X^n * f(X) - it simply shifts all coefficients to by n
-    let mut fwcoeffs = vec![G::Scalar::zero(); n];
+    let mut fwcoeffs = vec![G::ScalarField::zero(); n];
     fwcoeffs.append(&mut fcoeffs);
-    let fw = DensePolynomial::from_coeffs(fwcoeffs);
+    let fw = DensePolynomial::from_coefficients_vec(fwcoeffs);
 
     par! {
         // this computes f(z)
@@ -418,59 +415,50 @@ fn prove_commitment_w<G: CurveAffine>(
 
 /// Returns the KZG opening proof for the given commitment key. Specifically, it
 /// returns $g^{f(alpha) - f(z) / (alpha - z)}$ for $a$ and $b$.
-fn create_kzg_opening<G: CurveAffine>(
-    srs_powers_alpha_table: &dyn MultiscalarPrecomp<G>, // h^alpha^i
-    srs_powers_beta_table: &dyn MultiscalarPrecomp<G>,  // h^beta^i
+fn create_kzg_opening<G: AffineCurve>(
+    srs_powers_alpha_table: &[G], // h^alpha^i
+    srs_powers_beta_table: &[G],  // h^beta^i
     srs_powers_len: usize,
-    poly: DensePolynomial<G::Scalar>,
-    eval_poly: G::Scalar,
-    kzg_challenge: &G::Scalar,
-) -> Result<KZGOpening<G>, SynthesisError> {
+    poly: DensePolynomial<G::ScalarField>,
+    eval_poly: G::ScalarField,
+    kzg_challenge: &G::ScalarField,
+) -> Result<KZGOpening<G>, Error> {
     let mut neg_kzg_challenge = *kzg_challenge;
-    neg_kzg_challenge.negate();
+    neg_kzg_challenge.neg();
 
     if poly.coeffs().len() != srs_powers_len {
-        return Err(SynthesisError::MalformedSrs);
+        return Err(Error::InvalidSRS);
     }
 
     // f_v(X) - f_v(z) / (X - z)
-    let quotient_polynomial = &(&poly - &DensePolynomial::from_coeffs(vec![eval_poly]))
-        / &(DensePolynomial::from_coeffs(vec![neg_kzg_challenge, G::Scalar::one()]));
+    let quotient_polynomial = &(&poly - &DensePolynomial::from_coefficients_vec(vec![eval_poly]))
+        / &(DensePolynomial::from_coefficients_vec(vec![neg_kzg_challenge, G::ScalarField::one()]));
 
-    let quotient_polynomial_coeffs = quotient_polynomial.into_coeffs();
-
-    // multiexponentiation inner_product, inlined to optimize
-    let zero = G::Scalar::zero().into_repr();
-    let quotient_polynomial_coeffs_len = quotient_polynomial_coeffs.len();
-    let getter = |i: usize| -> <G::Scalar as PrimeField>::Repr {
-        if i >= quotient_polynomial_coeffs_len {
-            return zero;
-        }
-        quotient_polynomial_coeffs[i].into_repr()
-    };
+    let quotient_polynomial_coeffs = quotient_polynomial.coeffs();
 
     // we do one proof over h^a and one proof over h^b (or g^a and g^b depending
     // on the curve we are on). that's the extra cost of the commitment scheme
     // used which is compatible with Groth16 CRS insteaf of the original paper
     // of Bunz'19
-    Ok(rayon::join(
+    let (a, b) = rayon::join(
         || {
-            par_multiscalar::<_, G>(
-                &ScalarList::Getter(getter, srs_powers_len),
-                srs_powers_alpha_table,
-                std::mem::size_of::<<G::Scalar as PrimeField>::Repr>() * 8,
+            VariableBaseMSM::multi_scalar_mul(
+                &srs_powers_alpha_table,
+                &cfg_iter!(quotient_polynomial_coeffs)
+                    .map(|s| s.into_repr())
+                    .collect::<Vec<_>>(),
             )
-            .into_affine()
         },
         || {
-            par_multiscalar::<_, G>(
-                &ScalarList::Getter(getter, srs_powers_len),
-                srs_powers_beta_table,
-                std::mem::size_of::<<G::Scalar as PrimeField>::Repr>() * 8,
+            VariableBaseMSM::multi_scalar_mul(
+                &srs_powers_beta_table,
+                &cfg_iter!(quotient_polynomial_coeffs)
+                    .map(|s| s.into_repr())
+                    .collect::<Vec<_>>(),
             )
-            .into_affine()
         },
-    ))
+    );
+    Ok(KZGOpening::new_from_proj(a, b))
 }
 
 /// It returns the evaluation of the polynomial $\prod (1 + x_{l-j}(rX)^{2j}$ at

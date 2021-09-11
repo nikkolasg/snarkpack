@@ -5,7 +5,7 @@ mod commitment;
 mod errors;
 mod ip;
 mod proof;
-//mod prover;
+mod prover;
 mod srs;
 mod transcript;
 
@@ -14,6 +14,7 @@ pub use errors::*;
 use ark_ec::{AffineCurve, ProjectiveCurve};
 use ark_ff::{Field, PrimeField};
 use rayon::prelude::*;
+use std::ops::MulAssign;
 /// Returns the vector used for the linear combination fo the inner pairing product
 /// between A and B for the Groth16 aggregation: A^r * B. It is required as it
 /// is not enough to simply prove the ipp of A*B, we need a random linear
@@ -34,17 +35,12 @@ pub(crate) fn compress<C: AffineCurve>(vec: &mut Vec<C>, split: usize, scaler: &
     left.par_iter_mut()
         .zip(right.par_iter())
         .for_each(|(a_l, a_r)| {
-            let mut x = mul!(a_r.into_projective(), scaler.into_repr());
+            //let mut x = mul!(a_r.into_projective(), scaler.clone());
+            let sc = scaler.clone();
+            let mut x = a_r.mul(sc);
             x.add_assign_mixed(&a_l);
             *a_l = x.into_affine();
         });
     let len = left.len();
     vec.resize(len, C::zero());
-}
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
 }
