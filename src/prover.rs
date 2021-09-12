@@ -36,7 +36,7 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug>(
     proofs: &[Proof<E>],
 ) -> Result<AggregateProof<E>, Error> {
     if proofs.len() < 2 {
-        return Err(Error::NotEnoughProofs);
+        return Err(Error::InvalidProofSize);
     }
     if !proofs.len().is_power_of_two() {
         return Err(Error::NotPowerOfTwo);
@@ -65,8 +65,8 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug>(
     };
 
     // Derive a random scalar to perform a linear combination of proofs
-    transcript.append(b"AB commitment", &com_ab);
-    transcript.append(b"C commtiment", &com_c);
+    transcript.append(b"AB-commitment", &com_ab);
+    transcript.append(b"C-commitment", &com_c);
     let r = transcript.challenge_scalar::<E::Fr>(b"r-random-fiatshamir");
 
     // 1,r, r^2, r^3, r^4 ...

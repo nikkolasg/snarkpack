@@ -4,10 +4,12 @@ mod macros;
 mod commitment;
 mod errors;
 mod ip;
+mod pairing_check;
 mod proof;
 mod prover;
 mod srs;
 mod transcript;
+mod verifier;
 
 pub use errors::*;
 

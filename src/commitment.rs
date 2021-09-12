@@ -165,8 +165,8 @@ where
 }
 
 /// Both commitment outputs a pair of $F_q^k$ element.
-#[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct Output<F: Field + CanonicalSerialize + CanonicalDeserialize>(F, F);
+#[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone)]
+pub struct Output<F: Field + CanonicalSerialize + CanonicalDeserialize>(pub F, pub F);
 
 /// Commits to a single vector of G1 elements in the following way:
 /// $T = \prod_{i=0}^n e(A_i, v_{1,i})$

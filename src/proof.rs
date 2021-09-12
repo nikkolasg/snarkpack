@@ -282,7 +282,7 @@ impl<E: PairingEngine> PartialEq for TippMippProof<E> {
 /// KZGOpening represents the KZG opening of a commitment key (which is a tuple
 /// given commitment keys are a tuple).
 #[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize)]
-pub struct KZGOpening<G: AffineCurve>(G, G);
+pub struct KZGOpening<G: AffineCurve>(pub G, pub G);
 
 impl<G: AffineCurve> KZGOpening<G> {
     pub fn new_from_proj(a: G::Projective, b: G::Projective) -> Self {

@@ -18,10 +18,10 @@ pub enum Error {
     #[error("Invalid pairing result")]
     InvalidPairing,
 
-    #[error("Not Enough Proofs")]
-    NotEnoughProofs,
+    #[error("Proof Size Invalid")]
+    InvalidProofSize,
 
-    #[error("Not a power of two")]
+    #[error("Proofs Not a power of two")]
     NotPowerOfTwo,
 
     #[error("Invalid SRS")]
@@ -29,4 +29,7 @@ pub enum Error {
 
     #[error("Invalid proof: {0}")]
     InvalidProof(String),
+
+    #[error("Malformed Groth16 verifying key")]
+    MalformedVerifyingKey,
 }
