@@ -5,6 +5,7 @@ authors = ["nalos"]
 edition = "2018"
 
 [dependencies]
+crossbeam-channel = "0.5"
 ark-ff = { version = "^0.3.0", default-features = false }
 ark-ec = { version = "^0.3.0", default-features = false }
 ark-serialize = { version = "^0.3.0", default-features = false, features = [ "derive" ] }

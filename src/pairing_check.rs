@@ -16,8 +16,8 @@ use crate::Error;
 /// before going into a final exponentiation result
 /// - a right side result which is already in the right subgroup Gt which is to
 /// be compared to the left side when "final_exponentiatiat"-ed
-#[derive(Debug)]
-struct PairingCheck<E: PairingEngine> {
+#[derive(Debug, Copy, Clone)]
+pub struct PairingCheck<E: PairingEngine> {
     left: E::Fqk,
     right: E::Fqk,
     /// simple counter tracking number of non_randomized checks. If there are
@@ -29,7 +29,7 @@ impl<E> PairingCheck<E>
 where
     E: PairingEngine,
 {
-    fn new() -> PairingCheck<E> {
+    pub fn new() -> PairingCheck<E> {
         Self {
             left: E::Fqk::one(),
             right: E::Fqk::one(),
@@ -38,7 +38,7 @@ where
         }
     }
 
-    fn new_invalid() -> PairingCheck<E> {
+    pub fn new_invalid() -> PairingCheck<E> {
         Self {
             left: E::Fqk::one(),
             right: E::Fqk::one() + E::Fqk::one(),
@@ -46,14 +46,14 @@ where
         }
     }
 
-    /// Returns a pairing check from the output of the miller pairs and the expected
-    /// right hand side such that the following must hold:
+    /// Returns a pairing check from the output of the miller pairs and the
+    /// expected right hand side such that the following must hold:
     /// $$
-    /// finalExponentiation(res) = exp
+    ///   finalExponentiation(res) = exp
     /// $$
     ///
-    /// Note the check is NOT randomized and there must be only up to ONE check only that can not
-    /// be randomized when merging.
+    /// Note the check is NOT randomized and there must be only up to ONE check
+    /// only that can not be randomized when merging.
     fn from_pair(result: E::Fqk, exp: E::Fqk) -> PairingCheck<E> {
         Self {
             left: result,
@@ -62,25 +62,20 @@ where
         }
     }
 
-    fn from_products(lefts: Vec<E::Fqk>, right: E::Fqk) -> PairingCheck<E> {
+    /// Returns a pairing check from the output of the miller pairs and the
+    /// expected right hand side such that the following must hold:
+    /// $$
+    ///   finalExponentiation(\Prod_i lefts[i]) = exp
+    /// $$
+    ///
+    /// Note the check is NOT randomized and there must be only up to ONE check
+    /// only that can not be randomized when merging.
+    pub fn from_products(lefts: Vec<E::Fqk>, right: E::Fqk) -> PairingCheck<E> {
         let product = lefts.iter().fold(E::Fqk::one(), |mut acc, l| {
             acc *= l;
             acc
         });
         Self::from_pair(product, right)
-    }
-
-    /// Returns a PairingCheck such that the following hold:
-    /// $$
-    ///   FinalExponentiation(result) = 1
-    /// $$
-    /// Note the check is NOT randomnized
-    fn from_miller_one(result: E::Fqk) -> PairingCheck<E> {
-        Self {
-            left: result,
-            right: E::Fqk::one(),
-            non_randomized: 1,
-        }
     }
 
     /// returns a pairing tuple that is scaled by a random element.
@@ -147,7 +142,7 @@ where
     /// $$
     ///   FinalExponentiation(left) == right
     /// $$
-    fn verify(&self) -> bool {
+    pub fn verify(&self) -> bool {
         if self.non_randomized > 1 {
             dbg!("Pairing checks have more than 1 non-random checks");
             return false;
