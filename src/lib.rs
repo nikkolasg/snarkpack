@@ -7,11 +7,13 @@ mod ip;
 mod pairing_check;
 mod proof;
 mod prover;
-mod srs;
-mod transcript;
+pub mod srs;
+pub mod transcript;
 mod verifier;
 
 pub use errors::*;
+pub use prover::*;
+pub use verifier::*;
 
 use ark_ec::{AffineCurve, ProjectiveCurve};
 use ark_ff::{Field, PrimeField};
@@ -24,7 +26,7 @@ use std::ops::MulAssign;
 pub(crate) fn structured_scalar_power<F: Field>(num: usize, s: &F) -> Vec<F> {
     let mut powers = vec![F::one()];
     for i in 1..num {
-        powers.push(mul!(powers[i - 1], s));
+        powers.push(powers[i - 1] * s);
     }
     powers
 }

@@ -19,13 +19,15 @@ use std::ops::MulAssign;
 /// https://github.com/nikkolasg/taupipp/blob/baca1426266bf39416c45303e35c966d69f4f8b4/src/bin/assemble.rs#L12
 pub const MAX_SRS_SIZE: usize = (2 << 19) + 1;
 
-/// It contains the maximum number of raw elements of the SRS needed to aggregate and verify
-/// Groth16 proofs. One can derive specialized prover and verifier key for _specific_ size of
-/// aggregations by calling `srs.specialize(n)`. The specialized prover key also contains
-/// precomputed tables that drastically increase prover's performance.
-/// This GenericSRS is usually formed from the transcript of two distinct power of taus ceremony
+/// It contains the maximum number of raw elements of the SRS needed to
+/// aggregate and verify Groth16 proofs. One can derive specialized prover and
+/// verifier key for _specific_ size of aggregations by calling
+/// `srs.specialize(n)`. The specialized prover key also contains precomputed
+/// tables that drastically increase prover's performance.  This GenericSRS is
+/// usually formed from the transcript of two distinct power of taus ceremony
 /// ,in other words from two distinct Groth16 CRS.
-/// See [there](https://github.com/nikkolasg/taupipp) a way on how to generate this GenesisSRS.
+/// See [there](https://github.com/nikkolasg/taupipp) a way on how to generate
+/// this GenesisSRS.
 #[derive(Clone, Debug)]
 pub struct GenericSRS<E: PairingEngine> {
     /// $\{g^a^i\}_{i=0}^{N}$ where N is the smallest size of the two Groth16 CRS.
@@ -127,8 +129,7 @@ impl<E: PairingEngine> GenericSRS<E> {
         let g_up = tn;
         let h_low = 0;
         let h_up = h_low + n;
-        // TODO  see if it is worth implementing bellman-like
-        // "precompute_fixed_window(" method.
+        // TODO  precompute window
         let g_alpha_powers_table = self.g_alpha_powers[g_low..g_up].to_vec();
         let g_beta_powers_table = self.g_beta_powers[g_low..g_up].to_vec();
         let h_alpha_powers_table = self.h_alpha_powers[h_low..h_up].to_vec();
@@ -210,6 +211,10 @@ impl<E: PairingEngine> GenericSRS<E> {
 
     pub fn read<R: Read>(mut reader: R) -> Result<Self, Error> {
         let len = u32::deserialize(&mut reader).map_err(|e| Error::Serialization(e))?;
+        if len > MAX_SRS_SIZE as u32 {
+            return Err(Error::InvalidSRS);
+        }
+
         let g_alpha_powers = read_vec(len, &mut reader).map_err(|e| Error::Serialization(e))?;
         let g_beta_powers = read_vec(len, &mut reader).map_err(|e| Error::Serialization(e))?;
         let h_alpha_powers = read_vec(len, &mut reader).map_err(|e| Error::Serialization(e))?;
@@ -224,6 +229,8 @@ impl<E: PairingEngine> GenericSRS<E> {
     }
 }
 
+/// Generates a SRS of the given size. It must NOT be used in production, only
+/// in testing, as this is insecure given we know the secret exponent of the SRS.
 pub fn setup_fake_srs<E: PairingEngine, R: Rng>(rng: &mut R, size: usize) -> GenericSRS<E> {
     let alpha = E::Fr::rand(rng);
     let beta = E::Fr::rand(rng);
@@ -286,7 +293,6 @@ pub(crate) fn structured_generators_scalar_power<G: ProjectiveCurve>(
     let scalar_bits = G::ScalarField::size_in_bits();
     let window_size = FixedBaseMSM::get_mul_window_size(num);
     let g_table = FixedBaseMSM::get_window_table::<G>(scalar_bits, window_size, g.clone());
-    //let g_table = msm::fixed_base::get_window_table(scalar_bits, window_size, g.clone());
     let powers_of_g = FixedBaseMSM::multi_scalar_mul::<G>(
         //let powers_of_g = msm::fixed_base::multi_scalar_mul::<G>(
         scalar_bits,
@@ -308,21 +314,15 @@ fn read_vec<G: CanonicalDeserialize, R: Read>(
     len: u32,
     mut r: R,
 ) -> Result<Vec<G>, SerializationError> {
-    let vector_len = u32::deserialize(&mut r)? as usize;
-    if vector_len > MAX_SRS_SIZE {
-        return Err(SerializationError::from(IOError::new(
-            ErrorKind::InvalidData,
-            format!("invalid SRS vector length {}", vector_len),
-        )));
-    }
-    (0..vector_len).map(|_| G::deserialize(&mut r)).collect()
+    (0..len).map(|_| G::deserialize(&mut r)).collect()
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::bls::Bls12;
-    use rand_core::SeedableRng;
+    use ark_bls12_381::{Bls12_381 as Bls12, Fr};
+    use ark_std::{rand::Rng, One, UniformRand};
+    use rand_core::{RngCore, SeedableRng};
     use std::io::Cursor;
 
     #[test]
@@ -344,8 +344,8 @@ mod test {
         // and replace the size by appending the rest
         let mut new_buffer = Vec::new();
         let invalid_size = MAX_SRS_SIZE + 1;
-        new_buffer
-            .write_u32::<BigEndian>(invalid_size as u32)
+        (invalid_size as u32)
+            .serialize(&mut new_buffer)
             .expect("failed to write invalid size");
         buffer.drain(0..4);
         new_buffer.append(&mut buffer);

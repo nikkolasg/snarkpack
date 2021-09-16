@@ -42,9 +42,9 @@ pub fn verify_aggregate_proof<
 >(
     ip_verifier_srs: &VerifierSRS<E>,
     pvk: &PreparedVerifyingKey<E>,
-    rng: R,
     public_inputs: &[Vec<E::Fr>],
     proof: &AggregateProof<E>,
+    rng: R,
     mut transcript: &mut T,
 ) -> Result<(), Error> {
     dbg!("verify_aggregate_proof");
@@ -201,6 +201,7 @@ pub fn verify_aggregate_proof<
         // final value ip_ab is what we want to compare in the groth16
         // aggregated equation A * B
         let check = PairingCheck::from_products(vec![left, middle, right], proof.ip_ab.clone());
+        println!("VERIFY Groth16 equation check: {}", check.verify());
         send_checks.send(check).unwrap();
     });
     let res = valid_rcv.recv().unwrap();
@@ -241,8 +242,8 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
     transcript.append(b"vkey1", &proof.tmipp.gipa.final_vkey.1);
     transcript.append(b"wkey0", &proof.tmipp.gipa.final_wkey.0);
     transcript.append(b"wkey1", &proof.tmipp.gipa.final_wkey.1);
-    let z = transcript.challenge_scalar::<E::Fr>(b"z-challenge");
-
+    let c = transcript.challenge_scalar::<E::Fr>(b"z-challenge");
+    println!("\n VERIFIER --- r {} --- c {}\n", &r_shift, &c);
     // we take reference so they are able to be copied in the par! macro
     let final_a = &proof.tmipp.gipa.final_a;
     let final_b = &proof.tmipp.gipa.final_b;
@@ -268,7 +269,7 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
             &fvkey,
             &proof.tmipp.vkey_opening,
             &challenges_inv,
-            &z,
+            &c,
             rng,
             vclone,
         ),
@@ -279,7 +280,7 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
             &proof.tmipp.wkey_opening,
             &challenges,
             &r_shift.inverse().unwrap(),
-            &z,
+            &c,
             rng,
             wclone,
         ),
@@ -289,12 +290,15 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
         //
         // TIPP
         // z = e(A,B)
-        let _check_z = zclone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, final_b)], final_zab)).unwrap(),
+        //let _check_z = zclone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, final_b)], final_zab)).unwrap(),
+        let pcheckz = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, final_b)], final_zab),
         //  final_aB.0 = T = e(A,v1)e(w1,B)
-        let check_ab0 = ab0clone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.0),(&fwkey.0, final_b)], final_tab)).unwrap(),
+        //let check_ab0 = ab0clone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.0),(&fwkey.0, final_b)], final_tab)).unwrap(),
+        let pcheck_ab = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.0),(&fwkey.0, final_b)], final_tab),
 
         //  final_aB.1 = U = e(A,v2)e(w2,B)
-        let _check_ab1 = ab1clone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.1),(&fwkey.1, final_b)], final_uab)).unwrap(),
+        //let _check_ab1 = ab1clone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.1),(&fwkey.1, final_b)], final_uab)).unwrap(),
+        let pcheckab2 = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.1),(&fwkey.1, final_b)], final_uab),
 
         // MIPP
         // Verify base inner product commitment
@@ -303,21 +307,40 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
             ip::multiexponentiation::<E::G1Affine>(&[final_c.clone()], &[final_r]),
         // Check commiment correctness
         // T = e(C,v1)
-        let _check_t = tclone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.0)],final_tc)).unwrap(),
+        //let _check_t = tclone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.0)],final_tc)).unwrap(),
+        let pcheckt = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.0)],final_tc),
         // U = e(A,v2)
-        let _check_u = uclone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.1)],final_uc)).unwrap()
+        //let _check_u = uclone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.1)],final_uc)).unwrap()
+        let pchecku = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.1)],final_uc)
     };
+    println!("\n\nPCHECKT -> {}\n\n", pcheckt.verify());
+    println!("\n\nPCHECKZ -> {}\n\n", pcheckz.verify());
+    println!("\n\nPCHECKAB-> {}\n\n", pcheck_ab.verify());
+    println!("\n\nPCHECKAB2-> {}\n\n", pcheckab2.verify());
+    println!("\n\nPCHECKU-> {}\n\n", pchecku.verify());
+
+    tclone.send(pcheckt).unwrap();
+    uclone.send(pchecku).unwrap();
+    ab0clone.send(pcheck_ab).unwrap();
+    ab1clone.send(pcheckab2).unwrap();
+    zclone.send(pcheckz).unwrap();
     match final_z {
-        Err(e) => checks.send(PairingCheck::new_invalid()).unwrap(),
+        Err(e) => {
+            dbg!("TIPP verify: INVALID with multi exp: {}", e);
+            checks.send(PairingCheck::new_invalid()).unwrap();
+        }
         Ok(z) => {
-            dbg!(
+            dbg!(format!(
                 "TIPP verify: parallel checks before merge: {}ms",
-                now.elapsed().as_millis(),
-            );
-            let b = z == final_res.zc;
+                now.elapsed().as_millis()
+            ));
             // only check that doesn't require pairing so we can give a tuple
             // that will render the equation wrong in case it's false
-            if !b {
+            if z != final_res.zc {
+                dbg!(format!(
+                    "tipp verify: INVALID final_z check {} vs {}",
+                    z, final_res.zc
+                ));
                 checks.send(PairingCheck::new_invalid()).unwrap()
             }
         }
@@ -399,13 +422,15 @@ fn gipa_verify_tipp_mipp<E: PairingEngine, T: Transcript + Send>(
 
     let now = Instant::now();
     // output of the pair commitment T and U in TIPP -> COM((v,w),A,B)
-    let comab2 = proof.com_ab.clone();
-    let (t_ab, u_ab) = (comab2.0, comab2.1);
+    //let comab2 = proof.com_ab.clone();
+    //let Output(t_ab, u_ab) = (comab2.0, comab2.1);
+    let Output { 0: t_ab, 1: u_ab } = proof.com_ab.clone();
     let z_ab = proof.ip_ab; // in the end must be equal to Z = A^r * B
 
     // COM(v,C)
-    let comc2 = proof.com_c.clone();
-    let (t_c, u_c) = (comc2.0, comc2.1);
+    //let comc2 = proof.com_c.clone();
+    //let (t_c, u_c) = (comc2.0, comc2.1);
+    let Output { 0: t_c, 1: u_c } = proof.com_c.clone();
     let z_c = proof.agg_c.into_projective(); // in the end must be equal to Z = C^r
 
     let mut final_res = GipaTUZ {
@@ -487,7 +512,7 @@ fn gipa_verify_tipp_mipp<E: PairingEngine, T: Transcript + Send>(
                 }
                 Op::ZC(zx, c) => {
                     let mut zx = *zx;
-                    let zxp = zx.mul(c);
+                    let zxp: E::G1Projective = zx.mul(c);
                     res.zc.add_assign(&zxp);
                 }
             }
@@ -548,6 +573,11 @@ pub fn verify_kzg_v<E: PairingEngine, R: Rng + Send>(
 
     let v1clone = checks.clone();
     let v2clone = checks.clone();
+
+    println!(
+        "VERIFIER kzg v: challenge z {} --> f_v(z) = {}",
+        kzg_challenge, vpoly_eval_z
+    );
     par! {
         // e(g, C_f * h^{-y}) == e(v1 * g^{-x}, \pi) = 1
         let _check1 = kzg_check_v::<E, R>(
@@ -597,14 +627,13 @@ fn kzg_check_v<E: PairingEngine, R: Rng + Send>(
 
     // vk - (g * x)
     let c = sub!(vk, &mul!(v_srs.g, x)).into_affine();
-
-    checks
-        .send(PairingCheck::new_random_from_miller_inputs(
-            rand_fr::<E, R>(&rng),
-            &[(&ng, &b), (&c, &pi)],
-            &E::Fqk::one(),
-        ))
-        .unwrap();
+    let p = PairingCheck::new_random_from_miller_inputs(
+        rand_fr::<E, R>(&rng),
+        &[(&ng, &b), (&c, &pi)],
+        &E::Fqk::one(),
+    );
+    println!("VERIFY check kzg v --> {}", p.verify());
+    checks.send(p).unwrap();
 }
 
 /// Similar to verify_kzg_opening_g2 but for g1.
@@ -682,14 +711,13 @@ fn kzg_check_w<E: PairingEngine, R: Rng + Send>(
 
     // wk - (x * h)
     let d = sub!(wk, &mul!(v_srs.h, x)).into_affine();
-
-    checks
-        .send(PairingCheck::new_random_from_miller_inputs(
-            rand_fr::<E, R>(&rng),
-            &[(&a, &nh), (&pi, &d)],
-            &E::Fqk::one(),
-        ))
-        .unwrap();
+    let p = PairingCheck::new_random_from_miller_inputs(
+        rand_fr::<E, R>(&rng),
+        &[(&a, &nh), (&pi, &d)],
+        &E::Fqk::one(),
+    );
+    println!("VERIFY check kzg w --> {}", p.verify());
+    checks.send(p).unwrap();
 }
 
 /// Keeps track of the variables that have been sent by the prover and must

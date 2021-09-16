@@ -144,7 +144,10 @@ where
     /// $$
     pub fn verify(&self) -> bool {
         if self.non_randomized > 1 {
-            dbg!("Pairing checks have more than 1 non-random checks");
+            dbg!(format!(
+                "Pairing checks have more than 1 non-random checks {}",
+                self.non_randomized
+            ));
             return false;
         }
         E::final_exponentiation(&self.left).unwrap() == self.right
@@ -166,24 +169,22 @@ fn mul_if_not_one<E: PairingEngine>(left: &mut E::Fqk, right: &E::Fqk) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use groupy::CurveProjective;
-    use rand_core::RngCore;
-    use rand_core::SeedableRng;
+    use ark_bls12_381::{Bls12_381 as Bls12, Fr, G1Projective, G2Projective};
+    use ark_std::{rand::Rng, One, UniformRand, Zero};
+    use rand_core::{RngCore, SeedableRng};
 
-    use paired::bls12_381::{Bls12, G1 as G1Projective, G2 as G2Projective};
-
-    fn derive_non_zero<E: Engine, R: rand::RngCore>(mut rng: R) -> E::Fr {
+    fn derive_non_zero<E: PairingEngine, R: Rng>(mut rng: R) -> E::Fr {
         loop {
-            let coeff = E::Fr::random(&mut rng);
+            let coeff = E::Fr::rand(&mut rng);
             if coeff != E::Fr::zero() {
                 return coeff;
             }
         }
     }
 
-    fn gen_pairing_check<R: RngCore>(r: &mut R) -> PairingCheck<Bls12> {
-        let g1r = G1Projective::random(r);
-        let g2r = G2Projective::random(r);
+    fn gen_pairing_check<R: Rng>(r: &mut R) -> PairingCheck<Bls12> {
+        let g1r = G1Projective::rand(r);
+        let g2r = G2Projective::rand(r);
         let exp = Bls12::pairing(g1r.clone(), g2r.clone());
         let coeff = derive_non_zero::<Bls12, _>(r);
         let tuple = PairingCheck::<Bls12>::new_random_from_miller_inputs(

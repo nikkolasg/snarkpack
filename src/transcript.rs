@@ -33,6 +33,39 @@ impl Transcript for Merlin {
         // Reduce a double-width scalar to ensure a uniform distribution
         let mut buf = [0; 128];
         self.challenge_bytes(label, &mut buf);
-        F::from_random_bytes(&buf).unwrap()
+        let mut counter = 0;
+        loop {
+            match F::from_random_bytes(&buf) {
+                Some(e) => return e,
+                None => {
+                    println!("buffer REfilled {:x?}", &buf);
+                    buf[0] = counter;
+                    counter += 1;
+                    self.challenge_bytes(label, &mut buf);
+                    continue;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use ark_bls12_381::{Bls12_381 as Bls12, Fr, G1Projective};
+    use ark_ec::ProjectiveCurve;
+    use ark_std::{rand::Rng, One, UniformRand};
+    use rand_core::{RngCore, SeedableRng};
+    use std::io::Cursor;
+
+    #[test]
+    fn transcript() {
+        let mut transcript = new_merlin_transcript(b"test");
+        transcript.append(b"point", &G1Projective::prime_subgroup_generator());
+        let f1 = transcript.challenge_scalar::<Fr>(b"scalar");
+        let mut transcript2 = new_merlin_transcript(b"test");
+        transcript2.append(b"point", &G1Projective::prime_subgroup_generator());
+        let f2 = transcript2.challenge_scalar::<Fr>(b"scalar");
+        assert_eq!(f1, f2);
     }
 }

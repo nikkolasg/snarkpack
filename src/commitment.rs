@@ -1,7 +1,7 @@
 use crate::ip;
 use crate::Error;
 use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
-use ark_ff::Field;
+use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
 use ark_std::{
     fmt::Debug,
@@ -47,30 +47,6 @@ pub struct Key<G: AffineCurve> {
     pub b: Vec<G>,
 }
 
-// TODO implement that in cooridnation with ProverSRS
-/*impl<G: AffineCurve> CanonicalSerialize for Key<G> {*/
-//fn serialize(&self, mut out: impl Write) -> Result<(), SerializationError> {
-//for a in self.a {
-//a.serialize(&mut out)?;
-//}
-//for b in self.b {
-//b.serialize(&mut out)?;
-//}
-//Ok(())
-//}
-
-//fn serialized_size(&self) -> usize {
-//self.a.serialized_size() + self.b.serialized_size()
-//}
-//}
-
-//impl<G: AffineCurve> CanonicalDeserialize for Key<G> {
-//fn deserialize(mut out: impl Write) -> Result<Self, SerializationError> {
-//let a = G::deserialize(&mut out)?;
-//let b = G::deserialize(&mut out)?;
-//Ok(Key { a, b })
-//}
-/*}*/
 /// Commitment key used by the "single" commitment on G1 values as
 /// well as in the "pair" commtitment.
 /// It contains $\{h^a^i\}_{i=1}^n$ and $\{h^b^i\}_{i=1}^n$
@@ -105,8 +81,8 @@ where
             .zip(self.b.par_iter())
             .zip(s_vec.par_iter())
             .map(|((ap, bp), si)| {
-                let v1s = mul!(ap.into_projective(), *si).into_affine();
-                let v2s = mul!(bp.into_projective(), *si).into_affine();
+                let v1s = ap.mul(si.into_repr()).into_affine();
+                let v2s = bp.mul(si.into_repr()).into_affine();
                 (v1s, v2s)
             })
             .unzip();
@@ -145,8 +121,8 @@ where
             .zip(right.a.par_iter())
             .zip(right.b.par_iter())
             .map(|(((left_a, left_b), right_a), right_b)| {
-                let mut ra = mul!(right_a.into_projective(), *scale);
-                let mut rb = mul!(right_b.into_projective(), *scale);
+                let mut ra = right_a.mul(scale.into_repr());
+                let mut rb = right_b.mul(scale.into_repr());
                 ra.add_assign_mixed(left_a);
                 rb.add_assign_mixed(left_b);
                 (ra.into_affine(), rb.into_affine())
@@ -165,7 +141,7 @@ where
 }
 
 /// Both commitment outputs a pair of $F_q^k$ element.
-#[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone)]
+#[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize, Clone, Debug)]
 pub struct Output<F: Field + CanonicalSerialize + CanonicalDeserialize>(pub F, pub F);
 
 /// Commits to a single vector of G1 elements in the following way:
@@ -180,7 +156,6 @@ pub fn single_g1<E: PairingEngine>(
         let a = ip::pairing::<E>(a_vec, &vkey.a),
         let b = ip::pairing::<E>(a_vec, &vkey.b)
     };
-    //Ok(Output { a, b })
     Ok(Output(a, b))
 }
 
@@ -213,29 +188,29 @@ pub fn pair<E: PairingEngine>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bls::{Bls12, Fr, G1Projective, G2Projective};
-    use crate::groth16::aggregate::structured_generators_scalar_power;
-    use ff::Field;
+    use crate::srs::structured_generators_scalar_power;
+    use ark_bls12_381::{Bls12_381 as Bls12, Fr, G1Projective, G2Projective};
+    use ark_std::{rand::Rng, One, UniformRand};
     use rand_core::SeedableRng;
 
     #[test]
     fn test_commit_single() {
         let n = 6;
         let mut rng = rand_chacha::ChaChaRng::seed_from_u64(0u64);
-        let h = G2Projective::one();
-        let u = Fr::random(&mut rng);
-        let v = Fr::random(&mut rng);
+        let h = G2Projective::prime_subgroup_generator();
+        let u = Fr::rand(&mut rng);
+        let v = Fr::rand(&mut rng);
         let v1 = structured_generators_scalar_power(n, &h, &u);
         let v2 = structured_generators_scalar_power(n, &h, &v);
         let vkey = VKey::<Bls12> { a: v1, b: v2 };
         let a = (0..n)
-            .map(|_| G1Projective::random(&mut rng).into_affine())
+            .map(|_| G1Projective::rand(&mut rng).into_affine())
             .collect::<Vec<_>>();
         let c1 = single_g1::<Bls12>(&vkey, &a).unwrap();
         let c2 = single_g1::<Bls12>(&vkey, &a).unwrap();
         assert_eq!(c1, c2);
         let b = (0..n)
-            .map(|_| G1Projective::random(&mut rng).into_affine())
+            .map(|_| G1Projective::rand(&mut rng).into_affine())
             .collect::<Vec<_>>();
         let c3 = single_g1::<Bls12>(&vkey, &b).unwrap();
         assert!(c1 != c3);
@@ -245,10 +220,10 @@ mod tests {
     fn test_commit_pair() {
         let n = 6;
         let mut rng = rand_chacha::ChaChaRng::seed_from_u64(0u64);
-        let h = G2Projective::one();
-        let g = G1Projective::one();
-        let u = Fr::random(&mut rng);
-        let v = Fr::random(&mut rng);
+        let h = G2Projective::prime_subgroup_generator();
+        let g = G1Projective::prime_subgroup_generator();
+        let u = Fr::rand(&mut rng);
+        let v = Fr::rand(&mut rng);
         let v1 = structured_generators_scalar_power(n, &h, &u);
         let v2 = structured_generators_scalar_power(n, &h, &v);
         let w1 = structured_generators_scalar_power(2 * n, &g, &u);
@@ -260,10 +235,10 @@ mod tests {
             b: w2[n..].to_vec(),
         };
         let a = (0..n)
-            .map(|_| G1Projective::random(&mut rng).into_affine())
+            .map(|_| G1Projective::rand(&mut rng).into_affine())
             .collect::<Vec<_>>();
         let b = (0..n)
-            .map(|_| G2Projective::random(&mut rng).into_affine())
+            .map(|_| G2Projective::rand(&mut rng).into_affine())
             .collect::<Vec<_>>();
         let c1 = pair::<Bls12>(&vkey, &wkey, &a, &b).unwrap();
         let c2 = pair::<Bls12>(&vkey, &wkey, &a, &b).unwrap();

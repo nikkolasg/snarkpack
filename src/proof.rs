@@ -12,7 +12,7 @@ use super::{
 /// AggregateProof contains all elements to verify n aggregated Groth16 proofs
 /// using inner pairing product arguments. This proof can be created by any
 /// party in possession of valid Groth16 proofs.
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct AggregateProof<E: PairingEngine> {
     /// commitment to A and B using the pair commitment scheme needed to verify
     /// TIPP relation.
@@ -88,6 +88,7 @@ impl<E: PairingEngine> AggregateProof<E> {
 /// It contains all elements derived in the GIPA loop for both TIPP and MIPP at
 /// the same time. Serialization is done manually here for better inspection
 /// (CanonicalSerialization is implemented manually, not via the macro).
+#[derive(Debug, Clone)]
 pub struct GipaProof<E: PairingEngine> {
     pub nproofs: u32,
     pub comms_ab: Vec<(commitment::Output<E::Fqk>, commitment::Output<E::Fqk>)>,
@@ -264,7 +265,7 @@ where
 
 /// It contains the GIPA recursive elements as well as the KZG openings for v
 /// and w
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Debug, Clone)]
 pub struct TippMippProof<E: PairingEngine> {
     pub gipa: GipaProof<E>,
     pub vkey_opening: KZGOpening<E::G2Affine>,
@@ -281,7 +282,7 @@ impl<E: PairingEngine> PartialEq for TippMippProof<E> {
 
 /// KZGOpening represents the KZG opening of a commitment key (which is a tuple
 /// given commitment keys are a tuple).
-#[derive(PartialEq, CanonicalSerialize, CanonicalDeserialize)]
+#[derive(Clone, Debug, PartialEq, CanonicalSerialize, CanonicalDeserialize)]
 pub struct KZGOpening<G: AffineCurve>(pub G, pub G);
 
 impl<G: AffineCurve> KZGOpening<G> {
@@ -294,37 +295,57 @@ impl<G: AffineCurve> KZGOpening<G> {
 mod tests {
     use super::*;
 
-    use crate::bls::{Bls12, G1Affine, G1Projective, G2Affine, G2Projective};
+    use crate::commitment::Output as O;
+    use ark_bls12_381::{Bls12_381 as Bls12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
+    use ark_std::One;
 
     fn fake_proof() -> AggregateProof<Bls12> {
         // create pairing, as pairing results can be compressed
-        let p = G1Projective::one().into_affine();
-        let q = G2Projective::one().into_affine();
+        let p = G1Affine::prime_subgroup_generator();
+        let q = G2Affine::prime_subgroup_generator();
         let a = Bls12::pairing(p, q);
 
         let proof = AggregateProof::<Bls12> {
-            com_ab: (a, a),
-            com_c: (a, a),
+            com_ab: O(a, a),
+            com_c: O(a, a),
             ip_ab: a,
-            agg_c: G1Projective::one(),
+            agg_c: G1Affine::prime_subgroup_generator(),
             tmipp: TippMippProof::<Bls12> {
                 gipa: GipaProof {
                     nproofs: 4,
-                    comms_ab: vec![((a, a), (a, a)), ((a, a), (a, a))],
-                    comms_c: vec![((a, a), (a, a)), ((a, a), (a, a))],
+                    comms_ab: vec![(O(a, a), O(a, a)), (O(a, a), O(a, a))],
+                    comms_c: vec![(O(a, a), O(a, a)), (O(a, a), O(a, a))],
                     z_ab: vec![(a, a), (a, a)],
                     z_c: vec![
-                        (G1Projective::one(), G1Projective::one()),
-                        (G1Projective::one(), G1Projective::one()),
+                        (
+                            G1Affine::prime_subgroup_generator(),
+                            G1Affine::prime_subgroup_generator(),
+                        ),
+                        (
+                            G1Affine::prime_subgroup_generator(),
+                            G1Affine::prime_subgroup_generator(),
+                        ),
                     ],
-                    final_a: G1Affine::one(),
-                    final_b: G2Affine::one(),
-                    final_c: G1Affine::one(),
-                    final_vkey: (G2Affine::one(), G2Affine::one()),
-                    final_wkey: (G1Affine::one(), G1Affine::one()),
+                    final_a: G1Affine::prime_subgroup_generator(),
+                    final_b: G2Affine::prime_subgroup_generator(),
+                    final_c: G1Affine::prime_subgroup_generator(),
+                    final_vkey: (
+                        G2Affine::prime_subgroup_generator(),
+                        G2Affine::prime_subgroup_generator(),
+                    ),
+                    final_wkey: (
+                        G1Affine::prime_subgroup_generator(),
+                        G1Affine::prime_subgroup_generator(),
+                    ),
                 },
-                vkey_opening: (G2Affine::one(), G2Affine::one()),
-                wkey_opening: (G1Affine::one(), G1Affine::one()),
+                vkey_opening: KZGOpening(
+                    G2Affine::prime_subgroup_generator(),
+                    G2Affine::prime_subgroup_generator(),
+                ),
+                wkey_opening: KZGOpening(
+                    G1Affine::prime_subgroup_generator(),
+                    G1Affine::prime_subgroup_generator(),
+                ),
             },
         };
         proof
@@ -335,16 +356,14 @@ mod tests {
         let proof = fake_proof();
         let mut buffer = Vec::new();
         proof.write(&mut buffer).unwrap();
-        assert_eq!(buffer.len(), 8_212);
-
         let out = AggregateProof::<Bls12>::read(std::io::Cursor::new(&buffer)).unwrap();
         assert_eq!(proof, out);
     }
 
     #[test]
     fn test_proof_check() {
-        let p = G1Projective::one().into_affine();
-        let q = G2Projective::one().into_affine();
+        let p = G1Affine::prime_subgroup_generator();
+        let q = G2Affine::prime_subgroup_generator();
         let a = Bls12::pairing(p, q);
 
         let mut proof = fake_proof();
@@ -359,7 +378,7 @@ mod tests {
             .tmipp
             .gipa
             .comms_ab
-            .append(&mut vec![((a, a), (a, a))]);
+            .append(&mut vec![(Output(a, a), Output(a, a))]);
         proof.parsing_check().expect_err("Proof should be invalid");
     }
 }

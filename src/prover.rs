@@ -30,9 +30,9 @@ use super::{
 /// number of proofs and public inputs (+100ms in our case). In the case of Filecoin, the only
 /// non-fixed part of the public inputs are the challenges derived from a seed. Even though this
 /// seed comes from a random beeacon, we are hashing this as a safety precaution.
-pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug>(
+pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
     srs: &ProverSRS<E>,
-    mut transcript: impl Transcript,
+    mut transcript: &mut T,
     proofs: &[Proof<E>],
 ) -> Result<AggregateProof<E>, Error> {
     if proofs.len() < 2 {
@@ -99,7 +99,7 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug>(
     // we prove tipp and mipp using the same recursive loop
     let proof = prove_tipp_mipp(
         &srs,
-        &mut transcript,
+        transcript,
         &a,
         &b_r,
         &c,
@@ -128,9 +128,9 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug>(
 /// commitment key v is used to commit to A and C recursively in GIPA such that
 /// only one KZG proof is needed for v. In the original paper version, since the
 /// challenges of GIPA would be different, two KZG proofs would be needed.
-fn prove_tipp_mipp<E: PairingEngine>(
+fn prove_tipp_mipp<E: PairingEngine, T: Transcript>(
     srs: &ProverSRS<E>,
-    transcript: &mut impl Transcript,
+    mut transcript: &mut T,
     a: &[E::G1Affine],
     b: &[E::G2Affine],
     c: &[E::G1Affine],
@@ -159,7 +159,7 @@ fn prove_tipp_mipp<E: PairingEngine>(
     transcript.append(b"wkey0", &proof.final_wkey.0);
     transcript.append(b"wkey1", &proof.final_wkey.1);
     let z = transcript.challenge_scalar::<E::Fr>(b"z-challenge");
-
+    println!("\n\n PROVER --- r {} --- z {}\n\n", &r_shift, &z);
     // Complete KZG proofs
     par! {
         let vkey_opening = prove_commitment_v(
@@ -367,7 +367,10 @@ fn prove_commitment_v<G: AffineCurve>(
         kzg_challenge,
         &G::ScalarField::one(),
     );
-
+    println!(
+        "PROVER kzg v: challenge {} --> f_v(z) = {}",
+        kzg_challenge, vkey_poly_z
+    );
     create_kzg_opening(
         srs_powers_alpha_table,
         srs_powers_beta_table,
@@ -426,7 +429,7 @@ fn create_kzg_opening<G: AffineCurve>(
     let mut neg_kzg_challenge = *kzg_challenge;
     neg_kzg_challenge.neg();
 
-    if poly.coeffs().len() != srs_powers_len {
+    if poly.coeffs().len() != srs_powers_alpha_table.len() {
         return Err(Error::InvalidSRS);
     }
 
@@ -434,29 +437,28 @@ fn create_kzg_opening<G: AffineCurve>(
     let quotient_polynomial = &(&poly - &DensePolynomial::from_coefficients_vec(vec![eval_poly]))
         / &(DensePolynomial::from_coefficients_vec(vec![neg_kzg_challenge, G::ScalarField::one()]));
 
-    let quotient_polynomial_coeffs = quotient_polynomial.coeffs();
+    let mut quotient_polynomial_coeffs = quotient_polynomial.coeffs;
+    quotient_polynomial_coeffs.resize(srs_powers_alpha_table.len(), <G::ScalarField>::zero());
+    let quotient_repr = cfg_iter!(quotient_polynomial_coeffs)
+        .map(|s| s.into_repr())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        quotient_polynomial_coeffs.len(),
+        srs_powers_alpha_table.len()
+    );
+    assert_eq!(
+        quotient_polynomial_coeffs.len(),
+        srs_powers_beta_table.len()
+    );
 
     // we do one proof over h^a and one proof over h^b (or g^a and g^b depending
     // on the curve we are on). that's the extra cost of the commitment scheme
     // used which is compatible with Groth16 CRS insteaf of the original paper
     // of Bunz'19
     let (a, b) = rayon::join(
-        || {
-            VariableBaseMSM::multi_scalar_mul(
-                &srs_powers_alpha_table,
-                &cfg_iter!(quotient_polynomial_coeffs)
-                    .map(|s| s.into_repr())
-                    .collect::<Vec<_>>(),
-            )
-        },
-        || {
-            VariableBaseMSM::multi_scalar_mul(
-                &srs_powers_beta_table,
-                &cfg_iter!(quotient_polynomial_coeffs)
-                    .map(|s| s.into_repr())
-                    .collect::<Vec<_>>(),
-            )
-        },
+        || VariableBaseMSM::multi_scalar_mul(&srs_powers_alpha_table, &quotient_repr),
+        || VariableBaseMSM::multi_scalar_mul(&srs_powers_beta_table, &quotient_repr),
     );
     Ok(KZGOpening::new_from_proj(a, b))
 }
@@ -477,10 +479,10 @@ pub(super) fn polynomial_evaluation_product_form_from_transcript<F: Field>(
 
     let one = F::one();
 
-    let mut res = add!(one, &mul!(transcript[0], &power_zr));
+    let mut res = one + transcript[0] * &power_zr;
     for x in &transcript[1..] {
         power_zr.square();
-        res.mul_assign(&add!(one, &mul!(*x, &power_zr)));
+        res.mul_assign(one + *x * &power_zr);
     }
 
     res
@@ -509,7 +511,7 @@ fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: 
             power_2_r.square();
         }
         for j in 0..n {
-            let coeff = mul!(coefficients[j], &mul!(*x, &power_2_r));
+            let coeff = coefficients[j] * &(*x * &power_2_r);
             coefficients.push(coeff);
         }
     }
