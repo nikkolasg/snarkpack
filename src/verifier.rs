@@ -1,7 +1,7 @@
 use ark_ec::{msm::VariableBaseMSM, AffineCurve, PairingEngine, ProjectiveCurve};
 use ark_ff::{Field, PrimeField};
-use ark_groth16::{PreparedVerifyingKey, Proof};
-use ark_std::{rand::Rng, sync::Mutex, One, UniformRand, Zero};
+use ark_groth16::PreparedVerifyingKey;
+use ark_std::{rand::Rng, sync::Mutex, One, Zero};
 use crossbeam_channel::{bounded, Sender};
 use rayon::prelude::*;
 use std::ops::{AddAssign, MulAssign, Neg, SubAssign};
@@ -86,7 +86,7 @@ pub fn verify_aggregate_proof<
         let checkclone = send_checks.clone();
         s.spawn(move |_| {
             let now = Instant::now();
-            let checks = verify_tipp_mipp::<E, R, T>(
+            verify_tipp_mipp::<E, R, T>(
                 ip_verifier_srs,
                 proof,
                 &r, // we give the extra r as it's not part of the proof itself - it is simply used on top for the groth16 aggregation
@@ -127,7 +127,7 @@ pub fn verify_aggregate_proof<
         par! {
             // 3. Compute left part of the final pairing equation
             let left = {
-                let mut alpha_g1_r_suma = pvk.vk.alpha_g1;
+                let alpha_g1_r_suma = pvk.vk.alpha_g1;
                 let alpha_g1_r_sum = alpha_g1_r_suma.mul(r_sum);
 
                 E::miller_loop([&(E::G1Prepared::from(alpha_g1_r_sum.into()), E::G2Prepared::from(pvk.vk.beta_g2.into()))])
@@ -243,7 +243,10 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
     transcript.append(b"wkey0", &proof.tmipp.gipa.final_wkey.0);
     transcript.append(b"wkey1", &proof.tmipp.gipa.final_wkey.1);
     let c = transcript.challenge_scalar::<E::Fr>(b"z-challenge");
-    println!("\n VERIFIER --- r {} --- c {}\n", &r_shift, &c);
+    println!(
+        "\n VERIFIER --- r {} --- c {} --\nVERIFIER FINAL R -> {}\n",
+        &r_shift, &c, &final_r
+    );
     // we take reference so they are able to be copied in the par! macro
     let final_a = &proof.tmipp.gipa.final_a;
     let final_b = &proof.tmipp.gipa.final_b;
@@ -290,15 +293,15 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
         //
         // TIPP
         // z = e(A,B)
-        //let _check_z = zclone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, final_b)], final_zab)).unwrap(),
-        let pcheckz = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, final_b)], final_zab),
+        //let _check_z = zclone.send(PairingCheck::rand(&rng,&[(final_a, final_b)], final_zab)).unwrap(),
+        let pcheckz = PairingCheck::rand(&rng,&[(final_a, final_b)], final_zab),
         //  final_aB.0 = T = e(A,v1)e(w1,B)
-        //let check_ab0 = ab0clone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.0),(&fwkey.0, final_b)], final_tab)).unwrap(),
-        let pcheck_ab = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.0),(&fwkey.0, final_b)], final_tab),
+        //let check_ab0 = ab0clone.send(PairingCheck::rand(&rng,&[(final_a, &fvkey.0),(&fwkey.0, final_b)], final_tab)).unwrap(),
+        let pcheck_ab = PairingCheck::rand(&rng,&[(final_a, &fvkey.0),(&fwkey.0, final_b)], final_tab),
 
         //  final_aB.1 = U = e(A,v2)e(w2,B)
-        //let _check_ab1 = ab1clone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.1),(&fwkey.1, final_b)], final_uab)).unwrap(),
-        let pcheckab2 = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_a, &fvkey.1),(&fwkey.1, final_b)], final_uab),
+        //let _check_ab1 = ab1clone.send(PairingCheck::rand(&rng,&[(final_a, &fvkey.1),(&fwkey.1, final_b)], final_uab)).unwrap(),
+        let pcheckab2 = PairingCheck::rand(&rng,&[(final_a, &fvkey.1),(&fwkey.1, final_b)], final_uab),
 
         // MIPP
         // Verify base inner product commitment
@@ -307,11 +310,11 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
             ip::multiexponentiation::<E::G1Affine>(&[final_c.clone()], &[final_r]),
         // Check commiment correctness
         // T = e(C,v1)
-        //let _check_t = tclone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.0)],final_tc)).unwrap(),
-        let pcheckt = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.0)],final_tc),
+        //let _check_t = tclone.send(PairingCheck::rand(&rng,&[(final_c,&fvkey.0)],final_tc)).unwrap(),
+        let pcheckt = PairingCheck::rand(&rng,&[(final_c,&fvkey.0)],final_tc),
         // U = e(A,v2)
-        //let _check_u = uclone.send(PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.1)],final_uc)).unwrap()
-        let pchecku = PairingCheck::new_random_from_miller_inputs(rand_fr::<E,R>(&rng),&[(final_c,&fvkey.1)],final_uc)
+        //let _check_u = uclone.send(PairingCheck::rand(&rng,&[(final_c,&fvkey.1)],final_uc)).unwrap()
+        let pchecku = PairingCheck::rand(&rng,&[(final_c,&fvkey.1)],final_uc)
     };
     println!("\n\nPCHECKT -> {}\n\n", pcheckt.verify());
     println!("\n\nPCHECKZ -> {}\n\n", pcheckz.verify());
@@ -511,7 +514,6 @@ fn gipa_verify_tipp_mipp<E: PairingEngine, T: Transcript + Send>(
                     res.uc.mul_assign(&ux);
                 }
                 Op::ZC(zx, c) => {
-                    let mut zx = *zx;
                     let zxp: E::G1Projective = zx.mul(c);
                     res.zc.add_assign(&zxp);
                 }
@@ -568,7 +570,7 @@ pub fn verify_kzg_v<E: PairingEngine, R: Rng + Send>(
     // e(a,b) = e(c,d) <=> e(a,b)e(-c,d) = 1
     let mut ng = v_srs.g.clone();
     // e(A,B) = e(C,D) <=> e(A,B)e(-C,D) == 1 <=> e(A,B)e(C,D)^-1 == 1
-    ng.neg();
+    ng = ng.neg();
     let ng = ng.into_affine();
 
     let v1clone = checks.clone();
@@ -627,11 +629,7 @@ fn kzg_check_v<E: PairingEngine, R: Rng + Send>(
 
     // vk - (g * x)
     let c = sub!(vk, &mul!(v_srs.g, x)).into_affine();
-    let p = PairingCheck::new_random_from_miller_inputs(
-        rand_fr::<E, R>(&rng),
-        &[(&ng, &b), (&c, &pi)],
-        &E::Fqk::one(),
-    );
+    let p = PairingCheck::rand(&rng, &[(&ng, &b), (&c, &pi)], &E::Fqk::one());
     println!("VERIFY check kzg v --> {}", p.verify());
     checks.send(p).unwrap();
 }
@@ -657,7 +655,7 @@ pub fn verify_kzg_w<E: PairingEngine, R: Rng + Send>(
     fwz.mul_assign(&zn);
 
     let mut nh = v_srs.h;
-    nh.neg();
+    nh = nh.neg();
     let nh = nh.into_affine();
 
     let w1clone = checks.clone();
@@ -711,11 +709,7 @@ fn kzg_check_w<E: PairingEngine, R: Rng + Send>(
 
     // wk - (x * h)
     let d = sub!(wk, &mul!(v_srs.h, x)).into_affine();
-    let p = PairingCheck::new_random_from_miller_inputs(
-        rand_fr::<E, R>(&rng),
-        &[(&a, &nh), (&pi, &d)],
-        &E::Fqk::one(),
-    );
+    let p = PairingCheck::rand(&rng, &[(&a, &nh), (&pi, &d)], &E::Fqk::one());
     println!("VERIFY check kzg w --> {}", p.verify());
     checks.send(p).unwrap();
 }
@@ -759,15 +753,5 @@ where
         self.tc.mul_assign(&other.tc);
         self.uc.mul_assign(&other.uc);
         self.zc.add_assign(&other.zc);
-    }
-}
-
-fn rand_fr<E: PairingEngine, R: Rng + Send>(r: &Mutex<R>) -> E::Fr {
-    let rng: &mut R = &mut r.lock().unwrap();
-    loop {
-        let c = E::Fr::rand(rng);
-        if c != E::Fr::zero() {
-            return c;
-        }
     }
 }

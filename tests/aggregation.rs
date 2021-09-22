@@ -3,18 +3,12 @@ use ark_ff::One;
 use ark_groth16::{
     create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof,
 };
-use ark_std::test_rng;
 use snarkpack;
 use snarkpack::transcript::Transcript;
-use std::{
-    error::Error,
-    time::{Duration, Instant},
-};
 
 mod constraints;
 use crate::constraints::Benchmark;
-use ark_std::{rand::Rng, UniformRand};
-use rand_core::{RngCore, SeedableRng};
+use rand_core::SeedableRng;
 
 #[test]
 fn groth16_aggregation() {
@@ -29,7 +23,7 @@ fn groth16_aggregation() {
     // Prepare the verification key (for proof verification)
     let pvk = prepare_verifying_key(&params.vk);
     let nproofs = 8;
-    let srs = snarkpack::srs::setup_fake_srs::<Bls12_381, _>(&mut rng, nproofs * 2 + 1);
+    let srs = snarkpack::srs::setup_fake_srs::<Bls12_381, _>(&mut rng, nproofs);
     let (prover_srs, ver_srs) = srs.specialize(nproofs);
     let proofs = (0..nproofs)
         .map(|_| {

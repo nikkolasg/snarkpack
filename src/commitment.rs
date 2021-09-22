@@ -190,7 +190,7 @@ mod tests {
     use super::*;
     use crate::srs::structured_generators_scalar_power;
     use ark_bls12_381::{Bls12_381 as Bls12, Fr, G1Projective, G2Projective};
-    use ark_std::{rand::Rng, One, UniformRand};
+    use ark_std::UniformRand;
     use rand_core::SeedableRng;
 
     #[test]

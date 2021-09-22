@@ -1,8 +1,6 @@
-use ark_ec::PairingEngine;
 use ark_ff::fields::Field;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_serialize::CanonicalSerialize;
 use merlin::Transcript as Merlin;
-use std::io::Cursor;
 
 /// must be specific to the application.
 pub fn new_merlin_transcript(label: &'static [u8]) -> impl Transcript {
@@ -25,7 +23,7 @@ impl Transcript for Merlin {
 
     fn append<S: CanonicalSerialize>(&mut self, label: &'static [u8], element: &S) {
         let mut buff: Vec<u8> = vec![0; element.serialized_size()];
-        element.serialize(&mut buff);
+        element.serialize(&mut buff).expect("serialization failed");
         self.append_message(label, &buff);
     }
 
@@ -52,11 +50,8 @@ impl Transcript for Merlin {
 #[cfg(test)]
 mod test {
     use super::*;
-    use ark_bls12_381::{Bls12_381 as Bls12, Fr, G1Projective};
+    use ark_bls12_381::{Fr, G1Projective};
     use ark_ec::ProjectiveCurve;
-    use ark_std::{rand::Rng, One, UniformRand};
-    use rand_core::{RngCore, SeedableRng};
-    use std::io::Cursor;
 
     #[test]
     fn transcript() {

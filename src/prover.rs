@@ -1,7 +1,7 @@
-use ark_ec::{group::Group, msm::VariableBaseMSM, AffineCurve, PairingEngine, ProjectiveCurve};
-use ark_ff::{to_bytes, Field, One, PrimeField};
-use ark_groth16::{Proof, VerifyingKey};
-use ark_poly::polynomial::{univariate::DensePolynomial, UVPolynomial};
+use ark_ec::{msm::VariableBaseMSM, AffineCurve, PairingEngine, ProjectiveCurve};
+use ark_ff::{Field, One, PrimeField};
+use ark_groth16::Proof;
+use ark_poly::polynomial::{univariate::DensePolynomial, Polynomial, UVPolynomial};
 use ark_std::{cfg_iter, Zero};
 
 use rayon::prelude::*;
@@ -32,7 +32,7 @@ use super::{
 /// seed comes from a random beeacon, we are hashing this as a safety precaution.
 pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
     srs: &ProverSRS<E>,
-    mut transcript: &mut T,
+    transcript: &mut T,
     proofs: &[Proof<E>],
 ) -> Result<AggregateProof<E>, Error> {
     if proofs.len() < 2 {
@@ -43,7 +43,7 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
     }
 
     if !srs.has_correct_len(proofs.len()) {
-        return Err(Error::InvalidSRS);
+        return Err(Error::InvalidSRS("SRS len != proofs len".to_string()));
     }
     // We first commit to A B and C - these commitments are what the verifier
     // will use later to verify the TIPP and MIPP proofs
@@ -130,7 +130,7 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
 /// challenges of GIPA would be different, two KZG proofs would be needed.
 fn prove_tipp_mipp<E: PairingEngine, T: Transcript>(
     srs: &ProverSRS<E>,
-    mut transcript: &mut T,
+    transcript: &mut T,
     a: &[E::G1Affine],
     b: &[E::G2Affine],
     c: &[E::G1Affine],
@@ -165,14 +165,12 @@ fn prove_tipp_mipp<E: PairingEngine, T: Transcript>(
         let vkey_opening = prove_commitment_v(
             &srs.h_alpha_powers_table,
             &srs.h_beta_powers_table,
-            srs.n,
             &challenges_inv,
             &z,
         ),
         let wkey_opening = prove_commitment_w(
             &srs.g_alpha_powers_table,
             &srs.g_beta_powers_table,
-            srs.n,
             &challenges,
             &r_inverse,
             &z,
@@ -331,6 +329,7 @@ fn gipa_tipp_mipp<E: PairingEngine>(
 
     let (final_a, final_b, final_c) = (m_a[0], m_b[0], m_c[0]);
     let (final_vkey, final_wkey) = (vkey.first(), wkey.first());
+
     Ok((
         GipaProof {
             nproofs: a.len() as u32, // TODO: ensure u32
@@ -352,7 +351,6 @@ fn gipa_tipp_mipp<E: PairingEngine>(
 fn prove_commitment_v<G: AffineCurve>(
     srs_powers_alpha_table: &[G],
     srs_powers_beta_table: &[G],
-    n: usize,
     transcript: &[G::ScalarField],
     kzg_challenge: &G::ScalarField,
 ) -> Result<KZGOpening<G>, Error> {
@@ -367,14 +365,9 @@ fn prove_commitment_v<G: AffineCurve>(
         kzg_challenge,
         &G::ScalarField::one(),
     );
-    println!(
-        "PROVER kzg v: challenge {} --> f_v(z) = {}",
-        kzg_challenge, vkey_poly_z
-    );
     create_kzg_opening(
         srs_powers_alpha_table,
         srs_powers_beta_table,
-        n,
         vkey_poly,
         vkey_poly_z,
         kzg_challenge,
@@ -384,15 +377,15 @@ fn prove_commitment_v<G: AffineCurve>(
 fn prove_commitment_w<G: AffineCurve>(
     srs_powers_alpha_table: &[G],
     srs_powers_beta_table: &[G],
-    n: usize,
     transcript: &[G::ScalarField],
     r_shift: &G::ScalarField,
     kzg_challenge: &G::ScalarField,
 ) -> Result<KZGOpening<G>, Error> {
+    let n = srs_powers_alpha_table.len();
     // this computes f(X) = \prod (1 + x (rX)^{2^j})
     let mut fcoeffs = polynomial_coefficients_from_transcript(transcript, r_shift);
     // this computes f_w(X) = X^n * f(X) - it simply shifts all coefficients to by n
-    let mut fwcoeffs = vec![G::ScalarField::zero(); n];
+    let mut fwcoeffs = vec![G::ScalarField::zero(); fcoeffs.len()];
     fwcoeffs.append(&mut fcoeffs);
     let fw = DensePolynomial::from_coefficients_vec(fwcoeffs);
 
@@ -409,7 +402,6 @@ fn prove_commitment_w<G: AffineCurve>(
     create_kzg_opening(
         srs_powers_alpha_table,
         srs_powers_beta_table,
-        2 * n, // here we have twice the coefficients size
         fw,
         fwz,
         kzg_challenge,
@@ -421,16 +413,22 @@ fn prove_commitment_w<G: AffineCurve>(
 fn create_kzg_opening<G: AffineCurve>(
     srs_powers_alpha_table: &[G], // h^alpha^i
     srs_powers_beta_table: &[G],  // h^beta^i
-    srs_powers_len: usize,
     poly: DensePolynomial<G::ScalarField>,
     eval_poly: G::ScalarField,
     kzg_challenge: &G::ScalarField,
 ) -> Result<KZGOpening<G>, Error> {
     let mut neg_kzg_challenge = *kzg_challenge;
-    neg_kzg_challenge.neg();
+    neg_kzg_challenge = neg_kzg_challenge.neg();
 
     if poly.coeffs().len() != srs_powers_alpha_table.len() {
-        return Err(Error::InvalidSRS);
+        return Err(Error::InvalidSRS(
+            format!(
+                "SRS len {} != coefficients len {}",
+                srs_powers_alpha_table.len(),
+                poly.coeffs().len(),
+            )
+            .to_string(),
+        ));
     }
 
     // f_v(X) - f_v(z) / (X - z)
@@ -481,7 +479,7 @@ pub(super) fn polynomial_evaluation_product_form_from_transcript<F: Field>(
 
     let mut res = one + transcript[0] * &power_zr;
     for x in &transcript[1..] {
-        power_zr.square();
+        power_zr = power_zr.square();
         res.mul_assign(one + *x * &power_zr);
     }
 
@@ -508,7 +506,7 @@ fn polynomial_coefficients_from_transcript<F: Field>(transcript: &[F], r_shift: 
     for (i, x) in transcript.iter().enumerate() {
         let n = coefficients.len();
         if i > 0 {
-            power_2_r.square();
+            power_2_r = power_2_r.square();
         }
         for j in 0..n {
             let coeff = coefficients[j] * &(*x * &power_2_r);

@@ -24,8 +24,8 @@ pub enum Error {
     #[error("Proofs Not a power of two")]
     NotPowerOfTwo,
 
-    #[error("Invalid SRS")]
-    InvalidSRS,
+    #[error("Invalid SRS: {0}")]
+    InvalidSRS(String),
 
     #[error("Invalid proof: {0}")]
     InvalidProof(String),

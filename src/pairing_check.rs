@@ -1,11 +1,9 @@
 use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
 use ark_ff::{Field, PrimeField};
-use ark_std::One;
+use ark_std::{rand::Rng, sync::Mutex, One, UniformRand, Zero};
 use rayon::prelude::*;
 
 use std::ops::MulAssign;
-
-use crate::Error;
 
 /// PairingCheck represents a check of the form e(A,B)e(C,D)... = T. Checks can
 /// be aggregated together using random linear combination. The efficiency comes
@@ -86,11 +84,12 @@ where
     /// e(rA,B)e(rC,D) ... = out^r <=>
     /// e(A,B)^r e(C,D)^r = out^r <=> e(g,h)^{abr + cdr} = out^r
     /// (e(g,h)^{ab + cd})^r = out^r
-    pub fn new_random_from_miller_inputs<'a>(
-        coeff: E::Fr,
+    pub fn rand<'a, R: Rng + Send>(
+        rng: &Mutex<R>,
         it: &[(&'a E::G1Affine, &'a E::G2Affine)],
         out: &'a E::Fqk,
     ) -> PairingCheck<E> {
+        let coeff = rand_fr::<E, R>(&rng);
         let miller_out = it
             .into_par_iter()
             .map(|(a, b)| {
@@ -154,6 +153,15 @@ where
     }
 }
 
+fn rand_fr<E: PairingEngine, R: Rng + Send>(r: &Mutex<R>) -> E::Fr {
+    let rng: &mut R = &mut r.lock().unwrap();
+    loop {
+        let c = E::Fr::rand(rng);
+        if c != E::Fr::zero() {
+            return c;
+        }
+    }
+}
 fn mul_if_not_one<E: PairingEngine>(left: &mut E::Fqk, right: &E::Fqk) {
     let one = E::Fqk::one();
     if left == &one {
@@ -169,29 +177,17 @@ fn mul_if_not_one<E: PairingEngine>(left: &mut E::Fqk, right: &E::Fqk) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use ark_bls12_381::{Bls12_381 as Bls12, Fr, G1Projective, G2Projective};
-    use ark_std::{rand::Rng, One, UniformRand, Zero};
-    use rand_core::{RngCore, SeedableRng};
+    use ark_bls12_381::{Bls12_381 as Bls12, G1Projective, G2Projective};
+    use ark_std::{rand::Rng, UniformRand};
+    use rand_core::SeedableRng;
 
-    fn derive_non_zero<E: PairingEngine, R: Rng>(mut rng: R) -> E::Fr {
-        loop {
-            let coeff = E::Fr::rand(&mut rng);
-            if coeff != E::Fr::zero() {
-                return coeff;
-            }
-        }
-    }
-
-    fn gen_pairing_check<R: Rng>(r: &mut R) -> PairingCheck<Bls12> {
+    fn gen_pairing_check<R: Rng + Send>(r: &mut R) -> PairingCheck<Bls12> {
         let g1r = G1Projective::rand(r);
         let g2r = G2Projective::rand(r);
         let exp = Bls12::pairing(g1r.clone(), g2r.clone());
-        let coeff = derive_non_zero::<Bls12, _>(r);
-        let tuple = PairingCheck::<Bls12>::new_random_from_miller_inputs(
-            coeff,
-            &[(&g1r.into_affine(), &g2r.into_affine())],
-            &exp,
-        );
+        let mr = Mutex::new(r);
+        let tuple =
+            PairingCheck::<Bls12>::rand(&mr, &[(&g1r.into_affine(), &g2r.into_affine())], &exp);
         assert!(tuple.verify());
         tuple
     }

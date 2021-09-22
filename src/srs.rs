@@ -4,9 +4,8 @@ use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
 use ark_std::{rand::Rng, One, UniformRand};
 use sha2::{Digest, Sha256};
-use std::io::{Error as IOError, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 
-use rayon::prelude::*;
 use std::clone::Clone;
 
 use super::commitment::{VKey, WKey};
@@ -134,6 +133,14 @@ impl<E: PairingEngine> GenericSRS<E> {
         let g_beta_powers_table = self.g_beta_powers[g_low..g_up].to_vec();
         let h_alpha_powers_table = self.h_alpha_powers[h_low..h_up].to_vec();
         let h_beta_powers_table = self.h_beta_powers[h_low..h_up].to_vec();
+
+        println!(
+            "\nPROVER SRS -- nun_proofs {}, tn {}, alpha_power_table {}\n",
+            num_proofs,
+            tn,
+            g_alpha_powers_table.len()
+        );
+
         let v1 = self.h_alpha_powers[h_low..h_up].to_vec();
         let v2 = self.h_beta_powers[h_low..h_up].to_vec();
         let vkey = VKey::<E> { a: v1, b: v2 };
@@ -212,7 +219,7 @@ impl<E: PairingEngine> GenericSRS<E> {
     pub fn read<R: Read>(mut reader: R) -> Result<Self, Error> {
         let len = u32::deserialize(&mut reader).map_err(|e| Error::Serialization(e))?;
         if len > MAX_SRS_SIZE as u32 {
-            return Err(Error::InvalidSRS);
+            return Err(Error::InvalidSRS("SRS len > maximum".to_string()));
         }
 
         let g_alpha_powers = read_vec(len, &mut reader).map_err(|e| Error::Serialization(e))?;
@@ -320,9 +327,8 @@ fn read_vec<G: CanonicalDeserialize, R: Read>(
 #[cfg(test)]
 mod test {
     use super::*;
-    use ark_bls12_381::{Bls12_381 as Bls12, Fr};
-    use ark_std::{rand::Rng, One, UniformRand};
-    use rand_core::{RngCore, SeedableRng};
+    use ark_bls12_381::Bls12_381 as Bls12;
+    use rand_core::SeedableRng;
     use std::io::Cursor;
 
     #[test]

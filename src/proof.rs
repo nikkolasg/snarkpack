@@ -1,5 +1,4 @@
 use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
-use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize, SerializationError};
 use std::io::{Read, Write};
 
@@ -296,8 +295,7 @@ mod tests {
     use super::*;
 
     use crate::commitment::Output as O;
-    use ark_bls12_381::{Bls12_381 as Bls12, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
-    use ark_std::One;
+    use ark_bls12_381::{Bls12_381 as Bls12, G1Affine, G2Affine};
 
     fn fake_proof() -> AggregateProof<Bls12> {
         // create pairing, as pairing results can be compressed

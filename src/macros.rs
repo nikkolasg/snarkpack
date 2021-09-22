@@ -63,14 +63,6 @@ macro_rules! mul {
     }};
 }
 
-macro_rules! add {
-    ($a:expr, $b:expr) => {{
-        let mut a = $a;
-        a.add_assign($b);
-        a
-    }};
-}
-
 macro_rules! sub {
     ($a:expr, $b:expr) => {{
         let mut a = $a;

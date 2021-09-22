@@ -16,9 +16,8 @@ pub use prover::*;
 pub use verifier::*;
 
 use ark_ec::{AffineCurve, ProjectiveCurve};
-use ark_ff::{Field, PrimeField};
+use ark_ff::Field;
 use rayon::prelude::*;
-use std::ops::MulAssign;
 /// Returns the vector used for the linear combination fo the inner pairing product
 /// between A and B for the Groth16 aggregation: A^r * B. It is required as it
 /// is not enough to simply prove the ipp of A*B, we need a random linear
