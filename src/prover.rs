@@ -36,10 +36,12 @@ pub fn aggregate_proofs<E: PairingEngine + std::fmt::Debug, T: Transcript>(
     proofs: &[Proof<E>],
 ) -> Result<AggregateProof<E>, Error> {
     if proofs.len() < 2 {
-        return Err(Error::InvalidProofSize);
+        return Err(Error::InvalidProof("invalid proof size < 2".to_string()));
     }
     if !proofs.len().is_power_of_two() {
-        return Err(Error::NotPowerOfTwo);
+        return Err(Error::InvalidProof(
+            "invalid proof size: not power of two".to_string(),
+        ));
     }
 
     if !srs.has_correct_len(proofs.len()) {

@@ -13,6 +13,7 @@ mod verifier;
 
 pub use errors::*;
 pub use prover::*;
+pub use transcript::*;
 pub use verifier::*;
 
 use ark_ec::{AffineCurve, ProjectiveCurve};

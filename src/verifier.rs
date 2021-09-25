@@ -56,7 +56,9 @@ pub fn verify_aggregate_proof<
     }
 
     if public_inputs.len() != proof.tmipp.gipa.nproofs as usize {
-        return Err(Error::InvalidProofSize);
+        return Err(Error::InvalidProof(
+            "public inputs len != number of proofs".to_string(),
+        ));
     }
 
     let mut_rng = Mutex::new(rng);
