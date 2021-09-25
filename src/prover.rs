@@ -1,7 +1,7 @@
 use ark_ec::{msm::VariableBaseMSM, AffineCurve, PairingEngine, ProjectiveCurve};
 use ark_ff::{Field, One, PrimeField};
 use ark_groth16::Proof;
-use ark_poly::polynomial::{univariate::DensePolynomial, Polynomial, UVPolynomial};
+use ark_poly::polynomial::{univariate::DensePolynomial, UVPolynomial};
 use ark_std::{cfg_iter, Zero};
 
 use rayon::prelude::*;

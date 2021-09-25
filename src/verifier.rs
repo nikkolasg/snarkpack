@@ -138,7 +138,7 @@ pub fn verify_aggregate_proof<
                 E::miller_loop([&(
                     // e(c^r vector form, h^delta)
                     E::G1Prepared::from(proof.agg_c),
-                    pvk.delta_g2_neg_pc.clone(),
+                    E::G2Prepared::from(pvk.vk.delta_g2),
                 )])
             },
             // 5. compute the middle part of the final pairing equation, the one
@@ -191,7 +191,7 @@ pub fn verify_aggregate_proof<
 
                     g_ic.add_assign(&totsi);
 
-                    let ml = E::miller_loop([&(E::G1Prepared::from(g_ic.into_affine()), E::G2Prepared::from(pvk.vk.gamma_g2))]);
+                    let ml = E::miller_loop([&(E::G1Prepared::from(g_ic.into_affine()), E::G2Prepared::from(pvk.vk.gamma_g2.clone()))]);
                     let elapsed = now.elapsed().as_millis();
                     dbg!("table generation: {}ms", elapsed);
 
@@ -205,7 +205,7 @@ pub fn verify_aggregate_proof<
         send_checks.send(check).unwrap();
     });
     let res = valid_rcv.recv().unwrap();
-    dbg!("aggregate verify done: valid ? {}", res);
+    dbg!(format!("aggregate verify done: valid ? {}", res));
     match res {
         true => Ok(()),
         false => Err(Error::InvalidProof("Proof Verification Failed".to_string())),
