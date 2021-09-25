@@ -160,22 +160,6 @@ pub fn verify_aggregate_proof<
 
                     let now = Instant::now();
                     // now we do the multi exponentiation
-                    // BELLMAN one
-                   /* let getter = |i: usize| -> <E::Fr as PrimeField>::Repr {*/
-                        //// i denotes the column of the public input, and j denotes which public input
-                        //let mut c = public_inputs[0][i];
-                        //for j in 1..public_inputs.len() {
-                            //let mut ai = public_inputs[j][i];
-                            //ai.mul_assign(&powers[j]);
-                            //c.add_assign(&ai);
-                        //}
-                        //c.into_repr()
-                    /*};*/
-                    /*let totsi = par_multiscalar::<_, E::G1Affine>(*/
-                        //&ScalarList::Getter(getter, l),
-                        //&pvk.multiscalar.at_point(1),
-                        //std::mem::size_of::<<E::Fr as PrimeField>::Repr>() * 8,
-                    /*);*/
                     let summed = (0..l).into_par_iter().map(|i| {
                         // i denotes the column of the public input, and j denotes which public input
                         let mut c = public_inputs[0][i];
