@@ -161,7 +161,6 @@ fn prove_tipp_mipp<E: PairingEngine, T: Transcript>(
     transcript.append(b"wkey0", &proof.final_wkey.0);
     transcript.append(b"wkey1", &proof.final_wkey.1);
     let z = transcript.challenge_scalar::<E::Fr>(b"z-challenge");
-    println!("\n\n PROVER --- r {} --- z {}\n\n", &r_shift, &z);
     // Complete KZG proofs
     par! {
         let vkey_opening = prove_commitment_v(

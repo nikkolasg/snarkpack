@@ -187,7 +187,6 @@ pub fn verify_aggregate_proof<
         // final value ip_ab is what we want to compare in the groth16
         // aggregated equation A * B
         let check = PairingCheck::from_products(vec![left, middle, right], proof.ip_ab.clone());
-        println!("VERIFY Groth16 equation check: {}", check.verify());
         send_checks.send(check).unwrap();
     });
     let res = valid_rcv.recv().unwrap();
@@ -229,10 +228,6 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
     transcript.append(b"wkey0", &proof.tmipp.gipa.final_wkey.0);
     transcript.append(b"wkey1", &proof.tmipp.gipa.final_wkey.1);
     let c = transcript.challenge_scalar::<E::Fr>(b"z-challenge");
-    println!(
-        "\n VERIFIER --- r {} --- c {} --\nVERIFIER FINAL R -> {}\n",
-        &r_shift, &c, &final_r
-    );
     // we take reference so they are able to be copied in the par! macro
     let final_a = &proof.tmipp.gipa.final_a;
     let final_b = &proof.tmipp.gipa.final_b;
@@ -302,11 +297,6 @@ fn verify_tipp_mipp<E: PairingEngine, R: Rng + Send, T: Transcript + Send>(
         //let _check_u = uclone.send(PairingCheck::rand(&rng,&[(final_c,&fvkey.1)],final_uc)).unwrap()
         let pchecku = PairingCheck::rand(&rng,&[(final_c,&fvkey.1)],final_uc)
     };
-    println!("\n\nPCHECKT -> {}\n\n", pcheckt.verify());
-    println!("\n\nPCHECKZ -> {}\n\n", pcheckz.verify());
-    println!("\n\nPCHECKAB-> {}\n\n", pcheck_ab.verify());
-    println!("\n\nPCHECKAB2-> {}\n\n", pcheckab2.verify());
-    println!("\n\nPCHECKU-> {}\n\n", pchecku.verify());
 
     tclone.send(pcheckt).unwrap();
     uclone.send(pchecku).unwrap();
@@ -562,10 +552,6 @@ pub fn verify_kzg_v<E: PairingEngine, R: Rng + Send>(
     let v1clone = checks.clone();
     let v2clone = checks.clone();
 
-    println!(
-        "VERIFIER kzg v: challenge z {} --> f_v(z) = {}",
-        kzg_challenge, vpoly_eval_z
-    );
     par! {
         // e(g, C_f * h^{-y}) == e(v1 * g^{-x}, \pi) = 1
         let _check1 = kzg_check_v::<E, R>(
@@ -616,7 +602,6 @@ fn kzg_check_v<E: PairingEngine, R: Rng + Send>(
     // vk - (g * x)
     let c = sub!(vk, &mul!(v_srs.g, x)).into_affine();
     let p = PairingCheck::rand(&rng, &[(&ng, &b), (&c, &pi)], &E::Fqk::one());
-    println!("VERIFY check kzg v --> {}", p.verify());
     checks.send(p).unwrap();
 }
 
@@ -696,7 +681,6 @@ fn kzg_check_w<E: PairingEngine, R: Rng + Send>(
     // wk - (x * h)
     let d = sub!(wk, &mul!(v_srs.h, x)).into_affine();
     let p = PairingCheck::rand(&rng, &[(&a, &nh), (&pi, &d)], &E::Fqk::one());
-    println!("VERIFY check kzg w --> {}", p.verify());
     checks.send(p).unwrap();
 }
 
