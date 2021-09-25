@@ -29,14 +29,19 @@ impl Transcript for Merlin {
 
     fn challenge_scalar<F: Field>(&mut self, label: &'static [u8]) -> F {
         // Reduce a double-width scalar to ensure a uniform distribution
-        let mut buf = [0; 128];
+        let mut buf = [0; 64];
         self.challenge_bytes(label, &mut buf);
         let mut counter = 0;
         loop {
             match F::from_random_bytes(&buf) {
-                Some(e) => return e,
+                Some(e) => {
+                    if let Some(_) = e.inverse() {
+                        return e;
+                    } else {
+                        continue;
+                    }
+                }
                 None => {
-                    println!("buffer REfilled {:x?}", &buf);
                     buf[0] = counter;
                     counter += 1;
                     self.challenge_bytes(label, &mut buf);
